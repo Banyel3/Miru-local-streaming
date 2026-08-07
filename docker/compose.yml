@@ -1,0 +1,14 @@
+# The alternative to native Postgres, for anyone who prefers it.
+# The documented path is native — see docs/ARCHITECTURE.md §5 and docs/SETUP.md §3.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: miru
+      POSTGRES_PASSWORD: miru
+      POSTGRES_DB: miru
+    ports: ["5432:5432"]
+    volumes: ["miru-db:/var/lib/postgresql/data"]
+
+volumes:
+  miru-db:
