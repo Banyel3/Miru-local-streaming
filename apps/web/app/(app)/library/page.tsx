@@ -6,8 +6,9 @@ import { EmptyState, FactChip, SectionHeading } from "@/components/ui";
 import {
   MediaFile,
   audioLayout,
+  displayTitle,
   fileSize,
-  folderOf,
+  folderLabel,
   getLibrary,
   resolution,
   runtime,
@@ -65,10 +66,10 @@ export default async function LibraryPage({
                 <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                   <div className="flex items-center gap-2.5">
                     <WatchState id={file.id} />
-                    <h3 className="truncate text-[14.5px] font-bold">{file.title}</h3>
+                    <h3 className="truncate text-[14.5px] font-bold">{displayTitle(file).label}</h3>
                   </div>
                   <p className="truncate font-mono text-[11px] text-text-muted" title={file.path}>
-                    {folderOf(file.path) || "/"}
+                    {folderLabel(file.path) || "/"}
                   </p>
                 </div>
 

@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { MediaFile, clock } from "@/lib/api";
+import { MediaFile, clock, displayTitle } from "@/lib/api";
 import { percentOf, useContinueWatching } from "@/lib/store";
 import { Close, Heart, Home, Library, Menu, Settings } from "@/components/icons";
-import { ProgressBar, artTint } from "@/components/ui";
+import { ArtTile, ProgressBar } from "@/components/ui";
 
 const NAV = [
   { href: "/", label: "Home", jp: "ホーム", Icon: Home },
@@ -80,12 +80,14 @@ function ContinueWatching({ files, onNavigate }: { files: MediaFile[]; onNavigat
                   onClick={onNavigate}
                   className="flex items-center gap-3 rounded-xl p-2 transition-colors duration-150 hover:bg-border"
                 >
-                  <span
+                  <ArtTile
+                    seed={file.title}
                     className="h-[38px] w-[58px] shrink-0 rounded-lg border border-border"
-                    style={{ background: artTint(file.title) }}
                   />
                   <span className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="truncate text-[12.5px] font-bold">{file.title}</span>
+                    <span className="truncate text-[12.5px] font-bold">
+                      {displayTitle(file).label}
+                    </span>
                     <span className="text-[10.5px] text-text-muted">
                       {left > 0 ? `${clock(left)} left` : "Almost done"}
                     </span>

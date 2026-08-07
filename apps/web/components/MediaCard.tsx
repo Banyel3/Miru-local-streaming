@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { MediaFile, STRATEGY, resolution, runtime } from "@/lib/api";
+import { MediaFile, STRATEGY, displayTitle, resolution, runtime } from "@/lib/api";
 import { percentOf, toggleFavourite, useFavourites, useProgress } from "@/lib/store";
 import { Check, Heart, Play } from "@/components/icons";
-import { MicroChip, ProgressBar, artTint } from "@/components/ui";
+import { ArtTile, MicroChip, ProgressBar } from "@/components/ui";
 import { isComplete } from "@/lib/store";
 
 export function MediaCard({ file }: { file: MediaFile }) {
@@ -13,6 +13,7 @@ export function MediaCard({ file }: { file: MediaFile }) {
   const isFav = favourites?.includes(file.id) ?? false;
   const watched = progress ? isComplete(progress) : false;
   const strategy = STRATEGY[file.playback_strategy];
+  const { episode, label } = displayTitle(file);
 
   return (
     <article className="group relative">
@@ -20,16 +21,12 @@ export function MediaCard({ file }: { file: MediaFile }) {
         href={`/file/${file.id}`}
         className="flex flex-col gap-2.5 rounded-2xl border border-border bg-surface p-2.5 transition-[transform,border-color] duration-200 ease-[var(--ease-out-quart)] hover:border-border-hover motion-safe:hover:-translate-y-1"
       >
-        <div
-          className={`relative aspect-2/3 overflow-hidden rounded-[11px] transition-opacity ${
-            watched ? "opacity-55" : ""
-          }`}
-          style={{ background: artTint(file.title) }}
+        <ArtTile
+          seed={file.title}
+          episode={episode}
+          label={label}
+          className={`aspect-2/3 rounded-[11px] transition-opacity ${watched ? "opacity-55" : ""}`}
         >
-          <span className="absolute inset-x-0 bottom-0 line-clamp-3 bg-gradient-to-t from-black/45 to-transparent p-3 pt-8 font-jp text-[11px] leading-snug text-text-dim">
-            {file.title}
-          </span>
-
           {watched && (
             <span
               className="absolute top-2 left-2 flex size-[22px] items-center justify-center rounded-full bg-bg/85 text-text-muted"
@@ -56,11 +53,11 @@ export function MediaCard({ file }: { file: MediaFile }) {
           {progress && !watched && (
             <ProgressBar percent={percentOf(progress)} className="absolute inset-x-0 bottom-0 h-1 rounded-none" />
           )}
-        </div>
+        </ArtTile>
 
         <div className="flex flex-col gap-1.5 px-1 pb-1">
           <h3 className="truncate text-[13.5px] font-bold" title={file.title}>
-            {file.title}
+            {label}
           </h3>
           <div className="flex flex-wrap items-center gap-1.5">
             {runtime(file.duration_ms) && (
@@ -68,6 +65,9 @@ export function MediaCard({ file }: { file: MediaFile }) {
             )}
             {resolution(file) && <MicroChip tone="bright">{resolution(file)}</MicroChip>}
             {file.video_codec && <MicroChip>{file.video_codec}</MicroChip>}
+            {!file.video_codec && !runtime(file.duration_ms) && (
+              <span className="text-[11px] text-text-muted/70">Not probed</span>
+            )}
           </div>
         </div>
       </Link>

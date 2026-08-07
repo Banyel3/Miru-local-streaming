@@ -120,9 +120,78 @@ export function EmptyState({
 }
 
 /** Deterministic tint so a grid of unartworked files reads as a grid rather
- *  than as identical grey rectangles. Replaced by real posters at M2. */
+ *  than as identical grey rectangles. Replaced by real posters at M2.
+ *
+ *  Lightness sits meaningfully above --surface: at M1 there is no artwork, so
+ *  this tile IS the visual, and a gradient that blends into the page background
+ *  reads as a rendering failure rather than as a placeholder. */
 export function artTint(seed: string) {
   const n = [...seed].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const hue = 230 + (n % 70);
-  return `linear-gradient(155deg, hsl(${hue} 17% 17%), hsl(${hue - 12} 15% 10%))`;
+  const hue = 228 + (n % 84);
+  return `linear-gradient(155deg, hsl(${hue} 22% 26%), hsl(${hue - 16} 20% 15%))`;
+}
+
+/**
+ * The artwork stand-in. Until posters arrive the filename is the only content
+ * there is, so it gets set as real type instead of being shrunk into a corner
+ * of an empty rectangle.
+ */
+export function ArtTile({
+  seed,
+  episode,
+  label,
+  className = "",
+  compact,
+  children,
+}: {
+  seed: string;
+  episode?: string | null;
+  label?: string;
+  className?: string;
+  compact?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div
+      className={`relative flex flex-col justify-end overflow-hidden ${className}`}
+      style={{ background: artTint(seed) }}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.07]"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(115deg, #fff 0 1px, transparent 1px 14px)",
+        }}
+        aria-hidden
+      />
+      {/* Episode marker when there is one, the filename only when there isn't.
+          The caption beneath already carries the title, so printing both here
+          says the same thing twice — and once real posters land at M2 this
+          layer goes away entirely. */}
+      {(episode || label) && (
+        <div className={`relative flex flex-col gap-1 ${compact ? "p-2.5" : "p-4"}`}>
+          {episode ? (
+            <span
+              className={`font-mono font-extrabold tracking-tight text-highlight ${
+                compact ? "text-[13px]" : "text-[22px]"
+              }`}
+            >
+              {episode}
+            </span>
+          ) : (
+            <span
+              className={`font-bold text-text ${
+                compact
+                  ? "line-clamp-2 text-[11.5px] leading-tight"
+                  : "line-clamp-3 text-[15px] leading-snug"
+              }`}
+            >
+              {label}
+            </span>
+          )}
+        </div>
+      )}
+      {children}
+    </div>
+  );
 }

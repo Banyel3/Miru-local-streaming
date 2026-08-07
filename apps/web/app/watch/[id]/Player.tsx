@@ -13,10 +13,10 @@ import { DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/l
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
 
-import { MediaFile, STRATEGY } from "@/lib/api";
+import { MediaFile, PlayerMime, STRATEGY, displayTitle } from "@/lib/api";
 import { getProgress, setProgress } from "@/lib/store";
 import { ChevronLeft, Play } from "@/components/icons";
-import { artTint } from "@/components/ui";
+import { ArtTile } from "@/components/ui";
 
 /** How close to the end the next-episode card appears, and how long it counts
  *  down before advancing on its own. */
@@ -63,17 +63,16 @@ function NextCard({
       aria-label="Up next"
       className="pointer-events-auto flex w-[min(360px,calc(100vw-2rem))] items-center gap-3.5 rounded-2xl border border-border bg-surface/95 p-3.5 backdrop-blur-xl motion-safe:animate-[miru-rise_.3s_var(--ease-out-quart)]"
     >
-      <span
-        className="hidden h-14 w-24 shrink-0 rounded-[9px] border border-border sm:block"
-        style={{ background: artTint(next.title) }}
-        aria-hidden
+      <ArtTile
+        seed={next.title}
+        className="hidden h-14 w-24 shrink-0 rounded-[9px] border border-border sm:flex"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="text-[10px] font-extrabold tracking-[0.14em] text-accent">
           NEXT <span className="font-jp text-[11px] tracking-normal">つづく</span>
         </span>
         <span className="truncate text-[13px] font-bold" title={next.title}>
-          {next.title}
+          {displayTitle(next).label}
         </span>
         <div className="mt-1.5 flex items-center gap-2">
           <button
@@ -130,13 +129,14 @@ function NextCard({
 export function Player({
   file,
   src,
+  mime,
   next,
   restart,
 }: {
   file: MediaFile;
   src: string;
+  mime: PlayerMime;
   next: MediaFile | null;
-  nextSrc: string | null;
   restart: boolean;
 }) {
   const router = useRouter();
@@ -208,7 +208,9 @@ export function Player({
         ref={player}
         className="absolute inset-0 h-full w-full"
         title={file.title}
-        src={src}
+        // Explicit type, always. See mimeType() — an extensionless stream URL
+        // sends Vidstack down a cross-origin header probe that fails silently.
+        src={{ src, type: mime }}
         playsInline
         autoPlay
         keyShortcuts={{

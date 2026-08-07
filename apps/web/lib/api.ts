@@ -72,9 +72,69 @@ export const getHealth = () => get<{ ok: boolean; libraries: string[] }>("/api/h
 
 export const streamUrl = (id: number) => `${API_PUBLIC}/api/stream/${id}`;
 
+/**
+ * MIME type handed to the player.
+ *
+ * Load-bearing, not a nicety. Stream URLs are `/api/stream/{id}` with no file
+ * extension, so a player given a bare URL cannot infer the type and falls back
+ * to probing the response headers with fetch(). That probe is a cross-origin
+ * XHR; without CORS it fails, and the player then attaches no provider at all —
+ * a blank page rather than a broken video. Declaring the type up front means
+ * the probe never runs.
+ *
+ * Only two values are reachable: the player is handed `direct` files only, and
+ * the direct rung admits mp4/m4v/mov/webm. `.mov` is declared as video/mp4
+ * because a direct-play .mov is H.264 in an ISO-BMFF container, which is what
+ * browsers decode it as anyway.
+ */
+export type PlayerMime = "video/mp4" | "video/webm";
+
+export function mimeType(f: MediaFile): PlayerMime {
+  const ext = f.path.slice(f.path.lastIndexOf(".") + 1).toLowerCase();
+  return ext === "webm" || f.container === "webm" ? "video/webm" : "video/mp4";
+}
+
 /* ---------- derived display helpers ---------- */
 
 export const folderOf = (path: string) => path.slice(0, path.lastIndexOf("/"));
+
+/** Last two path segments. The absolute path is a debugging fact, not a
+ *  heading — showing all of it leaks the server's directory layout into every
+ *  screenshot and pushes the useful part off the end of the line. */
+export function folderLabel(path: string) {
+  return folderOf(path).split("/").filter(Boolean).slice(-2).join(" / ");
+}
+
+/**
+ * Split a filename into an episode marker and a readable label.
+ *
+ * Release filenames repeat the series name in every entry, so a grid of them
+ * truncates to the same prefix and tells you nothing. This pulls SxxEyy (or a
+ * bare " - Ep 4 - ") out front and keeps the distinguishing tail as the title.
+ *
+ * ponytail: deliberately naive — anitopy does this properly at M2, against the
+ * whole zoo of release-group conventions. This handles the common shapes only.
+ */
+export function displayTitle(file: MediaFile): { episode: string | null; label: string } {
+  const raw = file.title;
+
+  const se = raw.match(/\bS(\d{1,2})[\s._-]?E(\d{1,3})\b/i);
+  if (se) {
+    const tail = raw.slice(se.index! + se[0].length).replace(/^[\s._-]+/, "");
+    return {
+      episode: `S${se[1].padStart(2, "0")}E${se[2].padStart(2, "0")}`,
+      label: tail || raw,
+    };
+  }
+
+  const ep = raw.match(/\b(?:E|EP|Episode)[\s._-]?(\d{1,3})\b/i);
+  if (ep) {
+    const tail = raw.slice(ep.index! + ep[0].length).replace(/^[\s._-]+/, "");
+    return { episode: `E${ep[1].padStart(2, "0")}`, label: tail || raw };
+  }
+
+  return { episode: null, label: raw };
+}
 
 /** Siblings in the same directory, in natural order — the closest thing M1 has
  *  to an episode list until the metadata module lands. */

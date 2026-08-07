@@ -4,7 +4,16 @@ import { Player } from "./Player";
 import { ApiDown } from "@/components/ApiDown";
 import { ButtonLink } from "@/components/ui";
 import { ChevronLeft } from "@/components/icons";
-import { ApiError, MediaFile, STRATEGY, getFile, getLibrary, nextAfter, streamUrl } from "@/lib/api";
+import {
+  ApiError,
+  MediaFile,
+  STRATEGY,
+  getFile,
+  getLibrary,
+  mimeType,
+  nextAfter,
+  streamUrl,
+} from "@/lib/api";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -76,8 +85,8 @@ export default async function WatchPage({
     <Player
       file={file}
       src={streamUrl(file.id)}
+      mime={mimeType(file)}
       next={next}
-      nextSrc={next ? streamUrl(next.id) : null}
       restart={restart === "1"}
     />
   );

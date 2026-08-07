@@ -3,14 +3,15 @@ import { notFound } from "next/navigation";
 import { ApiDown } from "@/components/ApiDown";
 import { DetailActions } from "@/components/DetailActions";
 import { WatchState } from "@/components/WatchState";
-import { ButtonLink, FactChip, artTint } from "@/components/ui";
+import { ArtTile, ButtonLink, FactChip, artTint } from "@/components/ui";
 import { ChevronLeft } from "@/components/icons";
 import {
   ApiError,
   MediaFile,
   audioLayout,
+  displayTitle,
   fileSize,
-  folderOf,
+  folderLabel,
   getFile,
   getLibrary,
   resolution,
@@ -44,6 +45,7 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
 
   const siblings = siblingsOf(file, all);
   const hasSiblings = siblings.length > 1;
+  const { episode, label } = displayTitle(file);
 
   return (
     <article className="flex flex-col gap-10">
@@ -74,49 +76,49 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
           </Link>
 
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:gap-10">
-            <div
-              className="hidden aspect-2/3 w-[180px] shrink-0 overflow-hidden rounded-[20px] border border-border sm:block lg:w-[240px]"
-              style={{ background: artTint(file.title) }}
-              aria-hidden
+            <ArtTile
+              seed={file.title}
+              episode={episode}
+              label={label}
+              className="hidden aspect-2/3 w-[180px] shrink-0 rounded-[20px] border border-border sm:flex lg:w-[240px]"
             />
 
             <div className="flex min-w-0 flex-1 flex-col gap-4 pb-2">
               <div>
+                {episode && (
+                  <p className="mb-1.5 font-mono text-[13px] font-bold text-highlight">{episode}</p>
+                )}
                 <h1 className="text-[clamp(1.75rem,4.5vw,2.875rem)] leading-[1.05] font-extrabold tracking-[-0.02em] text-balance">
-                  {file.title}
+                  {label}
                 </h1>
-                <p
-                  className="mt-2 truncate font-mono text-xs text-text-muted"
-                  title={file.path}
-                >
-                  {folderOf(file.path) || "/"}
+                {/* Folder, not the absolute path: the full path is a debugging
+                    fact, and it pushes the useful tail off the end of the line. */}
+                <p className="mt-2 truncate font-mono text-xs text-text-muted" title={file.path}>
+                  {folderLabel(file.path) || "/"}
                 </p>
               </div>
 
+              {/* Separators are joined, not interleaved — emitting one per
+                  optional field leaves an orphan bullet when the field is null,
+                  which is every field until ffprobe has run. */}
               <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] font-semibold text-text-muted">
-                {runtime(file.duration_ms) && <span>{runtime(file.duration_ms)}</span>}
-                {resolution(file) && (
-                  <>
-                    <span className="text-border-hover" aria-hidden>
-                      •
+                {[
+                  runtime(file.duration_ms),
+                  resolution(file),
+                  file.width && file.height ? `${file.width}×${file.height}` : null,
+                  fileSize(file.size_bytes),
+                ]
+                  .filter(Boolean)
+                  .map((part, i) => (
+                    <span key={part as string} className="flex items-center gap-3.5">
+                      {i > 0 && (
+                        <span className="text-border-hover" aria-hidden>
+                          •
+                        </span>
+                      )}
+                      {part}
                     </span>
-                    <span>{resolution(file)}</span>
-                  </>
-                )}
-                {file.width && file.height && (
-                  <>
-                    <span className="text-border-hover" aria-hidden>
-                      •
-                    </span>
-                    <span>
-                      {file.width}×{file.height}
-                    </span>
-                  </>
-                )}
-                <span className="text-border-hover" aria-hidden>
-                  •
-                </span>
-                <span>{fileSize(file.size_bytes)}</span>
+                  ))}
               </div>
 
               <DetailActions file={file} />
@@ -145,15 +147,18 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
                       : "border-border hover:border-border-hover"
                   }`}
                 >
-                  <div
-                    className="aspect-video overflow-hidden rounded-[10px]"
-                    style={{ background: artTint(sib.title) }}
+                  <ArtTile
+                    seed={sib.title}
+                    episode={displayTitle(sib).episode}
+                    label={displayTitle(sib).label}
+                    compact
+                    className="aspect-video rounded-[10px]"
                   />
                   <div className="flex flex-col gap-1.5 px-1 pb-1">
                     <div className="flex items-center gap-2">
                       <WatchState id={sib.id} />
                       <h3 className="truncate text-[13px] font-bold" title={sib.title}>
-                        {sib.title}
+                        {displayTitle(sib).label}
                       </h3>
                     </div>
                     <p className="text-[11px] text-text-muted">
