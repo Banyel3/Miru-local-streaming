@@ -53,6 +53,21 @@ def test_subtitles_never_change_the_rung():
     ) == DIRECT
 
 
+def test_silent_video_is_direct_not_an_audio_transcode():
+    # Regression: a file with no audio stream was resolving to transcode_audio,
+    # queueing a re-encode of a stream that does not exist. Found by scanning a
+    # real 10s clip that ships without audio.
+    assert resolve_strategy(
+        Probe(container="mp4", video_codec="h264", audio_codec=None, audio_channels=None)
+    ) == DIRECT
+
+
+def test_silent_video_in_mkv_still_only_needs_remux():
+    assert resolve_strategy(
+        Probe(container="mkv", video_codec="h264", audio_codec=None)
+    ) == REMUX
+
+
 def test_unprobed_file_falls_back_to_direct():
     # ffprobe missing or unreadable file: a wrong `direct` costs one failed
     # play, a wrong `transcode_full` costs GPU on every request.

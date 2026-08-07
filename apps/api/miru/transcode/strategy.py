@@ -51,7 +51,14 @@ def resolve_strategy(p: Probe) -> str:
 
     # Video is fine from here down. Subtitles never enter this decision —
     # ASS/SSA is extracted and rendered client-side by JASSUB.
-    audio_ok = p.audio_codec in AUDIO_OK and (p.audio_channels or 2) <= 2
+    #
+    # No audio stream at all is not an audio problem: silent video, or a track
+    # ripped without audio, plays directly. Treating a missing codec as a bad
+    # codec sends those files to the transcoder for a stream that isn't there.
+    if p.audio_codec is None:
+        audio_ok = True
+    else:
+        audio_ok = p.audio_codec in AUDIO_OK and (p.audio_channels or 2) <= 2
     container_ok = (p.container or "") in CONTAINER_OK
 
     if not audio_ok:
