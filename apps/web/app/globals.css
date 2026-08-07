@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Palette — spec §10. Depth comes from layered surfaces and 1px borders.
+   No glows, no neon, no coloured shadows. The poster art carries the colour;
+   the chrome stays quiet. --accent is watch-state ONLY. */
+@theme {
+  --color-bg: #15131a;
+  --color-surface: #1e1b26;
+  --color-border: #2a2534;
+  --color-border-hover: #453d55;
+  --color-primary: #7c6ba8;
+  --color-primary-hover: #8b7ab8;
+  --color-highlight: #b4a5d0;
+  --color-accent: #d9a441;
+  --color-text: #edeaf2;
+  --color-text-muted: #918a9e;
+  --color-text-dim: #b5afc0;
+
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-jp: var(--font-noto-jp), var(--font-manrope), sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+::selection {
+  background: rgb(124 107 168 / 0.35);
+}
+
+/* Vidstack's default layout, repainted in Miru's palette. Using the shipped
+   layout rather than hand-rolling controls (spec §10) — this is the seam
+   where it stops looking like someone else's player. */
+.vds-video-layout {
+  --video-brand: var(--color-primary);
+  --media-slider-track-fill-bg: var(--color-accent);
+  --media-slider-track-progress-bg: var(--color-border-hover);
+  --media-slider-thumb-bg: var(--color-accent);
+  --media-menu-bg: var(--color-surface);
+  --media-menu-border: 1px solid var(--color-border);
+  --media-tooltip-bg: var(--color-surface);
+  --media-controls-color: var(--color-text);
+  --media-font-family: var(--font-sans);
+}
