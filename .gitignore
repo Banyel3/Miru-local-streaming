@@ -49,3 +49,6 @@ apps/web/node_modules/
 # local scratch media used for UI verification
 /media/
 .gstack/
+
+# extracted subtitle cache
+/.cache/

@@ -9,6 +9,7 @@ from miru.core.config import settings
 from miru.core.db import create_all
 from miru.library.router import router as library_router
 from miru.streaming.router import router as streaming_router
+from miru.streaming.subtitles import router as subtitles_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,6 +33,7 @@ app.add_middleware(
 
 app.include_router(library_router)
 app.include_router(streaming_router)
+app.include_router(subtitles_router)
 
 
 @app.get("/api/health")

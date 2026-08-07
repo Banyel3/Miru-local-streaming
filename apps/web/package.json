@@ -4,12 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "build": "npm run jassub:assets && next build",
     "start": "next start -p 3001",
-    "lint": "next lint"
+    "lint": "next lint",
+    "jassub:assets": "mkdir -p public/jassub && cp node_modules/jassub/dist/default.woff2 public/jassub/",
+    "postinstall": "npm run jassub:assets"
   },
   "dependencies": {
     "@vidstack/react": "^1.12.13",
+    "jassub": "^2.5.14",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

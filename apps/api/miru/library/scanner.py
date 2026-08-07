@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from miru.core.config import settings
 from miru.library.models import Job, MediaFile
 from miru.transcode.strategy import probe_file, resolve_strategy
+from miru.transcode.subtitles import find_sidecars
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,9 @@ def scan(db: Session, roots: list[Path] | None = None) -> dict:
         record.audio_channels = probe.audio_channels
         record.width = probe.width
         record.height = probe.height
-        record.subtitle_streams = probe.subtitle_streams
+        # Sidecar files sit beside the video and are invisible to ffprobe,
+        # but they are how most anime libraries actually ship subtitles.
+        record.subtitle_streams = probe.subtitle_streams + find_sidecars(path)
         record.playback_strategy = resolve_strategy(probe)
         record.probed_at = datetime.now(timezone.utc)
 

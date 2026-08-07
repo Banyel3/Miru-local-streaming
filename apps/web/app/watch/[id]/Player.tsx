@@ -7,13 +7,16 @@ import {
   MediaPlayer,
   MediaPlayerInstance,
   MediaProvider,
+  Track,
+  useMediaState,
   type MediaTimeUpdateEventDetail,
 } from "@vidstack/react";
 import { DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/layouts/default";
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
 
-import { MediaFile, PlayerMime, STRATEGY, displayTitle } from "@/lib/api";
+import { MediaFile, PlayerMime, STRATEGY, SubtitleTrack, displayTitle } from "@/lib/api";
+import { AssOverlay } from "@/components/AssOverlay";
 import { getProgress, setProgress } from "@/lib/store";
 import { ChevronLeft, Play } from "@/components/icons";
 import { ArtTile } from "@/components/ui";
@@ -130,12 +133,14 @@ export function Player({
   file,
   src,
   mime,
+  tracks,
   next,
   restart,
 }: {
   file: MediaFile;
   src: string;
   mime: PlayerMime;
+  tracks: SubtitleTrack[];
   next: MediaFile | null;
   restart: boolean;
 }) {
@@ -144,20 +149,36 @@ export function Player({
   const lastSave = useRef(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const [assFailed, setAssFailed] = useState(false);
+
+  // Which caption track the user picked, straight from the player's own menu —
+  // so ASS and VTT tracks share one control instead of growing a second one.
+  const activeTrack = useMediaState("textTrack", player);
+  const styled = tracks.find(
+    (t) => t.styled && activeTrack && t.label === activeTrack.label && !assFailed,
+  );
 
   const goNext = useCallback(() => {
     if (next) router.push(`/watch/${next.id}`);
   }, [next, router]);
 
+  // JASSUB draws onto the real <video>, so it needs the element the provider
+  // created rather than the player wrapper.
+  const captureVideo = useCallback(() => {
+    setVideoEl(player.current?.el?.querySelector("video") ?? null);
+  }, []);
+
   // Resume where the last session stopped. Vidstack fires canPlay once the
   // media is seekable, which is the earliest point a seek will stick.
   const onCanPlay = useCallback(() => {
+    captureVideo();
     if (restart) return;
     const saved = getProgress(file.id);
     if (saved && saved.positionS > 0 && player.current) {
       player.current.currentTime = saved.positionS;
     }
-  }, [file.id, restart]);
+  }, [captureVideo, file.id, restart]);
 
   const onTimeUpdate = useCallback(
     ({ currentTime }: MediaTimeUpdateEventDetail) => {
@@ -203,7 +224,9 @@ export function Player({
   }, [countdown, goNext]);
 
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-bg-deep">
+    <main
+      className={`relative h-dvh w-full overflow-hidden bg-bg-deep ${styled ? "[&_.vds-captions]:hidden" : ""}`}
+    >
       <MediaPlayer
         ref={player}
         className="absolute inset-0 h-full w-full"
@@ -211,6 +234,11 @@ export function Player({
         // Explicit type, always. See mimeType() — an extensionless stream URL
         // sends Vidstack down a cross-origin header probe that fails silently.
         src={{ src, type: mime }}
+        // Required, not optional. The stream is cross-origin, and without this
+        // the video is a tainted source: JASSUB cannot construct a VideoFrame
+        // from it and dies before it ever fetches the subtitle file. The API
+        // sends Access-Control-Allow-Origin for the web origin to match.
+        crossOrigin
         playsInline
         autoPlay
         keyShortcuts={{
@@ -226,11 +254,31 @@ export function Player({
         onTimeUpdate={onTimeUpdate}
         onEnded={() => next && goNext()}
       >
-        <MediaProvider />
+        <MediaProvider>
+          {tracks.map((t) => (
+            <Track
+              key={`sub-${t.index}`}
+              src={t.vttUrl}
+              kind="subtitles"
+              label={t.label}
+              lang={t.language ?? undefined}
+              type="vtt"
+            />
+          ))}
+        </MediaProvider>
         {/* Vidstack's shipped layout, repainted via CSS variables in
             globals.css. Spec §10: do not hand-roll video controls. */}
         <DefaultVideoLayout icons={defaultLayoutIcons} />
       </MediaPlayer>
+
+      {/* Styled rendering for the active ASS track. The VTT form stays
+          registered above as the fallback, so captions survive a wasm failure. */}
+      <AssOverlay
+        video={videoEl}
+        src={styled?.assUrl ?? null}
+        enabled={Boolean(styled)}
+        onFailed={() => setAssFailed(true)}
+      />
 
       {/* Top chrome. Pointer-events off so it never steals clicks from the
           player surface; the interactive parts opt back in. */}

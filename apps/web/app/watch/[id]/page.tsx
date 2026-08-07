@@ -13,6 +13,7 @@ import {
   mimeType,
   nextAfter,
   streamUrl,
+  subtitleTracks,
 } from "@/lib/api";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
@@ -86,6 +87,7 @@ export default async function WatchPage({
       file={file}
       src={streamUrl(file.id)}
       mime={mimeType(file)}
+      tracks={subtitleTracks(file)}
       next={next}
       restart={restart === "1"}
     />

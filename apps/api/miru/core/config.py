@@ -17,6 +17,14 @@ class Settings(BaseSettings):
 
     web_origin: str = "http://localhost:3000"
 
+    # Extracted subtitles land here. Rebuildable from the source files, so it
+    # is a cache and not data: deleting it costs one ffmpeg run per track.
+    cache_dir: str = ".cache"
+
+    @property
+    def cache(self) -> Path:
+        return Path(self.cache_dir).resolve()
+
     @property
     def libraries(self) -> list[Path]:
         return [Path(p) for p in self.library_paths.split(":") if p.strip()]

@@ -26,7 +26,7 @@ class MediaFileOut(BaseModel):
     audio_channels: int | None
     width: int | None
     height: int | None
-    subtitle_streams: list
+    subtitle_streams: list[dict]
     playback_strategy: str
 
 

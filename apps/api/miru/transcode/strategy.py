@@ -113,6 +113,7 @@ def probe_file(path: Path) -> Probe:
                 "codec": s.get("codec_name"),
                 "language": s.get("tags", {}).get("language"),
                 "title": s.get("tags", {}).get("title"),
+                "source": "embedded",
             }
             for s in streams
             if s.get("codec_type") == "subtitle"

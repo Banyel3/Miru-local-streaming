@@ -72,6 +72,45 @@ export const getHealth = () => get<{ ok: boolean; libraries: string[] }>("/api/h
 
 export const streamUrl = (id: number) => `${API_PUBLIC}/api/stream/${id}`;
 
+export type SubtitleTrack = {
+  index: number;
+  label: string;
+  language: string | null;
+  styled: boolean;
+  vttUrl: string;
+  assUrl: string | null;
+};
+
+const LANGUAGE_NAMES = new Intl.DisplayNames(["en"], { type: "language" });
+
+function languageLabel(code: string | null): string | null {
+  if (!code) return null;
+  try {
+    return LANGUAGE_NAMES.of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** Tracks are addressed by position in this list, which is the same order the
+ *  API published — embedded stream indices are not contiguous and sidecar
+ *  files have none at all. */
+export function subtitleTracks(file: MediaFile): SubtitleTrack[] {
+  return (file.subtitle_streams ?? []).map((s, i) => {
+    const styled = ["ass", "ssa"].includes((s.codec ?? "").toLowerCase());
+    const name = languageLabel(s.language) ?? (s as { title?: string }).title ?? `Track ${i + 1}`;
+    const base = `${API_PUBLIC}/api/subtitles/${file.id}/${i}`;
+    return {
+      index: i,
+      label: styled ? `${name} (styled)` : name,
+      language: s.language,
+      styled,
+      vttUrl: `${base}?format=vtt`,
+      assUrl: styled ? base : null,
+    };
+  });
+}
+
 /**
  * MIME type handed to the player.
  *
