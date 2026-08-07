@@ -1,11 +1,15 @@
 @import "tailwindcss";
 
 /* Palette — spec §10. Depth comes from layered surfaces and 1px borders.
-   No glows, no neon, no coloured shadows. The poster art carries the colour;
-   the chrome stays quiet. --accent is watch-state ONLY. */
+   No glows, no neon, no coloured shadows. Poster art carries the colour;
+   the chrome stays quiet. --accent is reserved for watch state and playback
+   position — progress bars, resume markers, the timeline fill, and the
+   transcoding indicator. Never decoration. */
 @theme {
   --color-bg: #15131a;
+  --color-bg-deep: #100e14;
   --color-surface: #1e1b26;
+  --color-surface-2: #242029;
   --color-border: #2a2534;
   --color-border-hover: #453d55;
   --color-primary: #7c6ba8;
@@ -13,35 +17,133 @@
   --color-highlight: #b4a5d0;
   --color-accent: #d9a441;
   --color-text: #edeaf2;
-  --color-text-muted: #918a9e;
   --color-text-dim: #b5afc0;
+  --color-text-muted: #918a9e;
 
   --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
   --font-jp: var(--font-noto-jp), var(--font-manrope), sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
+
+  /* Exponential ease-out. No bounce, no elastic — this is a tool, not a toy. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Semantic stacking order. Never arbitrary 999s. */
+  --z-rail: 20;
+  --z-sticky: 30;
+  --z-drawer-backdrop: 40;
+  --z-drawer: 50;
+  --z-player-chrome: 60;
+  --z-toast: 70;
 }
 
-html,
+html {
+  background: var(--color-bg);
+  color-scheme: dark;
+}
+
 body {
   background: var(--color-bg);
   color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
   background: rgb(124 107 168 / 0.35);
 }
 
-/* Vidstack's default layout, repainted in Miru's palette. Using the shipped
-   layout rather than hand-rolling controls (spec §10) — this is the seam
-   where it stops looking like someone else's player. */
+/* One focus treatment for the whole app. Never remove it without replacing it. */
+:focus-visible {
+  outline: 2px solid var(--color-highlight);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Horizontal rails: momentum scrolling with snap, and a scrollbar that is
+   present but quiet. Not a custom scrollbar — a narrowed native one. */
+.rail {
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+.rail > * {
+  scroll-snap-align: start;
+}
+
+/* Drawer and card entrances. Both are short and ease-out; nothing bounces. */
+@keyframes miru-slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes miru-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Skeletons: a slow sweep, not a pulse. Disabled under reduced motion by the
+   rule above, which leaves a static surface — still a legible placeholder. */
+@keyframes miru-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: miru-sweep 1.8s linear infinite;
+}
+
+/* Vidstack's shipped layout, repainted in Miru's palette. Using the library's
+   layout rather than hand-rolling controls (spec §10); this is the seam where
+   it stops looking like someone else's player. */
 .vds-video-layout {
   --video-brand: var(--color-primary);
+  --media-brand: var(--color-primary);
+  --media-focus-ring-color: var(--color-highlight);
   --media-slider-track-fill-bg: var(--color-accent);
   --media-slider-track-progress-bg: var(--color-border-hover);
+  --media-slider-track-bg: rgb(42 37 52 / 0.9);
   --media-slider-thumb-bg: var(--color-accent);
   --media-menu-bg: var(--color-surface);
   --media-menu-border: 1px solid var(--color-border);
+  --media-menu-text-color: var(--color-text);
   --media-tooltip-bg: var(--color-surface);
+  --media-tooltip-border: 1px solid var(--color-border);
   --media-controls-color: var(--color-text);
   --media-font-family: var(--font-sans);
+}
+
+/* The control bar reads as one floating glass panel, per the design. */
+.vds-video-layout .vds-controls-group:last-child {
+  padding-inline: 4px;
 }

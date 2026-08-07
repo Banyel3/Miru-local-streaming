@@ -1,79 +1,84 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { Player } from "./Player";
-import { MediaFile, STRATEGY_LABEL, getFile, streamUrl } from "@/lib/api";
+import { ApiDown } from "@/components/ApiDown";
+import { ButtonLink } from "@/components/ui";
+import { ChevronLeft } from "@/components/icons";
+import { ApiError, MediaFile, STRATEGY, getFile, getLibrary, nextAfter, streamUrl } from "@/lib/api";
 
-function StrategyChip({ file }: { file: MediaFile }) {
-  const direct = file.playback_strategy === "direct";
-  return (
-    <div
-      className="flex items-center gap-2 rounded-full border bg-surface/60 px-3.5 py-1.5 font-mono text-[11.5px] font-semibold backdrop-blur-md"
-      style={{
-        color: direct ? "#B4A5D0" : "#D9A441",
-        borderColor: direct ? "#2A2534" : "#453D55",
-      }}
-    >
-      <span
-        className="h-[7px] w-[7px] rounded-full"
-        style={{ background: direct ? "#B4A5D0" : "#D9A441" }}
-      />
-      {STRATEGY_LABEL[file.playback_strategy]}
-    </div>
-  );
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  try {
+    return { title: `${(await getFile(Number(id))).title} — Miru` };
+  } catch {
+    return { title: "Miru" };
+  }
 }
 
-export default async function Watch({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export default async function WatchPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ restart?: string }>;
+}) {
+  const [{ id }, { restart }] = await Promise.all([params, searchParams]);
 
   let file: MediaFile;
+  let all: MediaFile[] = [];
   try {
-    file = await getFile(Number(id));
-  } catch {
+    [file, all] = await Promise.all([getFile(Number(id)), getLibrary({ sort: "title" })]);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      return (
+        <main className="grid min-h-dvh place-items-center bg-bg-deep p-8">
+          <div className="w-full max-w-lg">
+            <ApiDown />
+          </div>
+        </main>
+      );
+    }
     notFound();
   }
 
-  const direct = file.playback_strategy === "direct";
+  const strategy = STRATEGY[file.playback_strategy];
+  const next = nextAfter(file, all);
+
+  if (!strategy.playable) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-bg-deep p-8">
+        <div className="flex max-w-lg flex-col items-start gap-4">
+          <Link
+            href={`/file/${file.id}`}
+            className="inline-flex items-center gap-2 text-sm font-semibold text-text-muted transition-colors hover:text-text"
+          >
+            <ChevronLeft />
+            Back
+          </Link>
+          <h1 className="text-2xl font-extrabold text-balance">{file.title}</h1>
+          <p className="flex items-center gap-2 text-sm font-bold text-accent">
+            <span className="size-2 rounded-full bg-accent" aria-hidden />
+            {strategy.label} required
+          </p>
+          <p className="text-sm leading-relaxed text-text-dim">
+            {strategy.note} The file is catalogued and its details are on the info page — it just
+            can&apos;t be handed to the browser as-is yet.
+          </p>
+          <ButtonLink href={`/file/${file.id}`} variant="secondary">
+            See file details
+          </ButtonLink>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#100E14]">
-      <div className="absolute inset-0">
-        {direct ? (
-          <Player src={streamUrl(file.id)} title={file.title} />
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-            <p className="text-lg font-bold">This file needs {STRATEGY_LABEL[file.playback_strategy].toLowerCase()}</p>
-            <p className="max-w-md text-sm text-text-dim">
-              {file.video_codec}
-              {file.container ? ` in ${file.container.toUpperCase()}` : ""} — resolved as{" "}
-              <span className="font-mono text-highlight">{file.playback_strategy}</span>. M1 serves
-              direct play only; the remux and transcode rungs land in M3 and M4.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Top chrome sits above the player and stays out of its pointer path. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between p-7">
-        <div className="pointer-events-auto flex items-center gap-3.5">
-          <Link
-            href="/"
-            className="flex h-[38px] w-[38px] items-center justify-center rounded-xl border border-border bg-surface/60 backdrop-blur-md hover:border-border-hover"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="#EDEAF2" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M15 5l-7 7 7 7" />
-            </svg>
-          </Link>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[15px] font-extrabold">{file.title}</span>
-            <span className="text-xs text-text-muted">
-              {[file.container?.toUpperCase(), file.video_codec, file.audio_codec]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-          </div>
-        </div>
-        <StrategyChip file={file} />
-      </div>
-    </div>
+    <Player
+      file={file}
+      src={streamUrl(file.id)}
+      next={next}
+      nextSrc={next ? streamUrl(next.id) : null}
+      restart={restart === "1"}
+    />
   );
 }

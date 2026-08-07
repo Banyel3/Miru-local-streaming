@@ -45,3 +45,7 @@ __pycache__/
 # next.js (workspace)
 apps/web/.next/
 apps/web/node_modules/
+
+# local scratch media used for UI verification
+/media/
+.gstack/
