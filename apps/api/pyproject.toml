@@ -1,0 +1,25 @@
+[project]
+name = "miru-api"
+version = "0.1.0"
+description = "Miru — personal self-hosted media server"
+requires-python = ">=3.11"
+dependencies = [
+    # 0.45 is the first release whose FileResponse handles Range requests.
+    # Streaming correctness depends on it — see tests/test_range.py.
+    "starlette>=0.45",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+include = ["miru*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
