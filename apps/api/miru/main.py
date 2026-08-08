@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from miru.core.auth import require_token
 from miru.core.config import settings
 from miru.core.db import create_all
+from miru.acquisition.router import router as acquisition_router
 from miru.library.router import router as library_router
 from miru.streaming.router import router as streaming_router
 from miru.streaming.subtitles import router as subtitles_router
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(acquisition_router)
 app.include_router(library_router)
 app.include_router(streaming_router)
 app.include_router(subtitles_router)

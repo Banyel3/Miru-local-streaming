@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     incoming_path: str = ""
     incoming_settle_seconds: float = 120.0
 
+    # Acquisition, both on the PC. Empty means the feature is off rather than
+    # broken: the API reports it unconfigured instead of failing at search time.
+    prowlarr_url: str = ""
+    prowlarr_api_key: str = ""
+    aria2_url: str = ""
+    aria2_secret: str = ""
+
     # Transcode worker on the PC. Empty means no worker: files needing an
     # encoder are then reported unavailable rather than failing at play time.
     transcode_worker: str = ""
