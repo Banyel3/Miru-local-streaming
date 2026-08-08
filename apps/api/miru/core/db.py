@@ -22,6 +22,7 @@ def create_all() -> None:
     # ponytail: create_all, not Alembic. One machine, no data that can't be
     # rebuilt by rescanning. Alembic lands with `progress` (M3), which is the
     # first table the filesystem can't regenerate. See ARCHITECTURE.md §3.
-    import miru.library.models  # noqa: F401  (registers tables on Base)
+    import miru.catalog.models  # noqa: F401  (registers tables on Base)
+    import miru.library.models  # noqa: F401
 
     Base.metadata.create_all(engine)
