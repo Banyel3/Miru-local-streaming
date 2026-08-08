@@ -41,6 +41,34 @@ Neither is breakage; both are improvements with a measurement behind them.
 - **The episode list inside the download sheet** (`file-page` §5). The component
   exists and is used on `/file/{id}`; the sheet still shows releases only.
 
+## Settled: how adult content is kept off the wall
+
+Decided 2026-08-08 after measuring all three providers. **The provider's own
+flag, and nothing else.** AniList `isAdult`, TMDB `adult`; stored on the work
+and excluded once in `rails._base()`.
+
+What that catches and what it cannot, measured rather than assumed:
+
+| | |
+|---|---|
+| caught | 14 works, every adult-anime title that was on the home page |
+| missed | erotic drama — `Sex Trip`, `High (School) On Sex` |
+| correctly left alone | `HK Hentai Kamen`, the 2013 comedy *HK: Forbidden Super Hero* |
+
+The miss is a source limit, not a bug. **TVmaze has no adult field at all** —
+`High (School) On Sex` returns `type: Scripted`, genres `Drama, Comedy,
+Romance`. And TMDB answers `adult=False` for all three titles above, including
+*Sex Trip*: that flag is reserved for pornography, not for an R rating.
+
+A keyword rule was considered and refused. It would catch the two, and it would
+also hide *HK Hentai Kamen*, which is a mainstream film — and every future title
+with an unlucky name. The provider flag has no false positives, which is the
+trade this catalogue makes everywhere else: a wrong split is cosmetic, a wrong
+merge or a wrongly hidden film is not.
+
+If this needs revisiting, the option not taken is a per-work blocklist the user
+sets from the card — nothing guessed, nothing to maintain.
+
 ## Known open bugs, unrelated to any plan
 
 - `_restate_works` is an N+1 with row locks.
