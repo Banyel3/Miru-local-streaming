@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # is a cache and not data: deleting it costs one ffmpeg run per track.
     cache_dir: str = ".cache"
 
+    # Where the downloader writes. Deliberately NOT scanned: a growing file
+    # probes as garbage and, because the scan also records size and mtime, is
+    # never re-probed. Entries move into the library once they stop changing.
+    incoming_path: str = ""
+    incoming_settle_seconds: float = 120.0
+
     # Transcode worker on the PC. Empty means no worker: files needing an
     # encoder are then reported unavailable rather than failing at play time.
     transcode_worker: str = ""
@@ -38,6 +44,10 @@ class Settings(BaseSettings):
     @property
     def cache(self) -> Path:
         return Path(self.cache_dir).resolve()
+
+    @property
+    def incoming(self) -> Path | None:
+        return Path(self.incoming_path) if self.incoming_path.strip() else None
 
     @property
     def libraries(self) -> list[Path]:

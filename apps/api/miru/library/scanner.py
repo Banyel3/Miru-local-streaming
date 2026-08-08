@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from miru.core.config import settings
+from miru.library.incoming import promote
 from miru.library.models import Job, MediaFile
 from miru.transcode.strategy import probe_file, resolve_strategy
 from miru.transcode.subtitles import find_sidecars
@@ -36,6 +37,12 @@ def _walk(roots: list[Path]):
 
 def scan(db: Session, roots: list[Path] | None = None) -> dict:
     roots = roots if roots is not None else settings.libraries
+
+    # Finished downloads join the library first, so a single scan both promotes
+    # and indexes them rather than needing two passes.
+    moved = {"promoted": 0, "waiting": 0}
+    if settings.incoming and roots:
+        moved = promote(settings.incoming, roots[0], settings.incoming_settle_seconds)
     existing = {f.path: f for f in db.scalars(select(MediaFile))}
     added = updated = unchanged = 0
     seen: set[str] = set()
@@ -79,7 +86,13 @@ def scan(db: Session, roots: list[Path] | None = None) -> dict:
         db.delete(record)
 
     db.commit()
-    return {"added": added, "updated": updated, "unchanged": unchanged, "removed": len(removed)}
+    return {
+        "added": added,
+        "updated": updated,
+        "unchanged": unchanged,
+        "removed": len(removed),
+        **moved,
+    }
 
 
 def run_scan_job(job_id: int) -> None:
