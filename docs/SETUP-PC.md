@@ -300,6 +300,10 @@ reason to reach for a container here.
 # on the PC, inside WSL2 — check the port first, this environment has form
 python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',9696));print('9696 free')"
 
+# .NET needs libicu for globalization; without it Prowlarr aborts on startup
+# with "Couldn't find a valid ICU package installed on the system".
+sudo apt update && sudo apt install -y libicu-dev
+
 cd /tmp
 wget --content-disposition 'https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=x64'
 tar -xzf Prowlarr*.linux*.tar.gz
@@ -423,6 +427,8 @@ until someone wakes it — everything the laptop can serve keeps working.
 | Symptom | Where to look |
 |---|---|
 | `apt`, `sudo` or `python3` "not found" in WSL | You are in Docker Desktop's VM, not Ubuntu. Step 0 |
+| Prowlarr aborts: "Couldn't find a valid ICU package" | `sudo apt install -y libicu-dev`. Do **not** use the Invariant flag — it breaks culture-aware matching of Japanese release titles |
+| `EADDRINUSE` with nothing in `ss -ltn` | VS Code's port forwarder holding a `CLOSE_WAIT` socket. Reload the remote window, or use a port it never touched |
 | `curl http://100.67.44.13:8010/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
 | Worker reports `"encoder":"libx264"` | Step 2, in the worker's own shell. NVENC probe failed |
 | Player shows a CORS error | `WORKER_WEB_ORIGIN` does not match the browser's origin exactly, scheme and port included |
