@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# miru — start, stop and inspect the whole suite for whichever machine you are on.
+#
+#   miru            start everything for this machine
+#   miru stop       stop what this script started
+#   miru status     what is up, what is not
+#   miru logs [svc] tail a service's log
+#
+# Role is detected, not configured: the PC has the Prowlarr install, the laptop
+# has the Next.js app. Pass MIRU_ROLE=pc|laptop to override.
+set -uo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN="$HOME/.miru-run"
+mkdir -p "$RUN"
+
+detect_role() {
+  [ -n "${MIRU_ROLE:-}" ] && { echo "$MIRU_ROLE"; return; }
+  [ -d /opt/Prowlarr ] && { echo pc; return; }
+  [ -d "$REPO/apps/web/node_modules" ] && { echo laptop; return; }
+  echo unknown
+}
+ROLE="$(detect_role)"
+
+green() { printf '\033[32m%s\033[0m\n' "$1"; }
+red()   { printf '\033[31m%s\033[0m\n' "$1"; }
+dim()   { printf '\033[2m%s\033[0m\n' "$1"; }
+
+# A service is "up" if its port answers, not if a pidfile exists. Pidfiles lie
+# after a crash; a listening port is the thing that actually matters.
+port_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && exec 3>&- && return 0 || return 1; }
+
+start_one() { # name port command...
+  local name="$1" port="$2"; shift 2
+  if port_up "$port"; then dim "  $name already up on :$port"; return; fi
+  nohup "$@" >"$RUN/$name.log" 2>&1 &
+  echo $! >"$RUN/$name.pid"
+  for _ in $(seq 1 40); do
+    sleep 0.5
+    port_up "$port" && { green "  $name up on :$port"; return; }
+    kill -0 "$(cat "$RUN/$name.pid")" 2>/dev/null || break
+  done
+  red "  $name FAILED — tail $RUN/$name.log"
+  tail -3 "$RUN/$name.log" 2>/dev/null | sed 's/^/      /'
+}
+
+stop_all() {
+  for pf in "$RUN"/*.pid; do
+    [ -e "$pf" ] || continue
+    local name; name="$(basename "$pf" .pid)"
+    local pid; pid="$(cat "$pf")"
+    if kill -0 "$pid" 2>/dev/null; then
+      # Kill the process group: uvicorn --reload and npm both spawn children
+      # that outlive a bare kill on the parent.
+      kill -- "-$(ps -o pgid= "$pid" | tr -d ' ')" 2>/dev/null || kill "$pid" 2>/dev/null
+      echo "  stopped $name ($pid)"
+    fi
+    rm -f "$pf"
+  done
+}
+
+status() {
+  echo "role: $ROLE"
+  if [ "$ROLE" = laptop ]; then
+    check "postgres"  5432; check "api"      8000; check "web"      3001
+    dim   "  worker/prowlarr/aria2 live on the PC — miru status there"
+  else
+    check "worker"    8010; check "prowlarr" 9696; check "aria2"    6800
+  fi
+}
+check() { port_up "$2" && green "  $1 :$2 up" || red "  $1 :$2 down"; }
+
+start_laptop() {
+  echo "starting Miru (laptop)"
+  # Postgres is a container here; everything else is a process.
+  if ! port_up 5432; then
+    docker start docker_db_1 >/dev/null 2>&1 && green "  postgres started" || red "  postgres FAILED to start"
+    for _ in $(seq 1 30); do port_up 5432 && break; sleep 0.5; done
+  else
+    dim "  postgres already up on :5432"
+  fi
+
+  [ -f "$REPO/.env" ] || { red "  no .env — copy .env.example and fill it in"; exit 1; }
+  set -a; . "$REPO/.env"; set +a
+
+  start_one api 8000 "$REPO/.venv/bin/uvicorn" miru.main:app \
+    --host 0.0.0.0 --port 8000 --app-dir "$REPO/apps/api"
+
+  # :3001 deliberately — :3000 is the portfolio on this machine.
+  ( cd "$REPO/apps/web" && start_one web 3001 npm run dev )
+}
+
+start_pc() {
+  echo "starting Miru (PC)"
+  start_one worker 8010 "$HOME/miru/.venv/bin/uvicorn" miru_worker.main:app \
+    --host 0.0.0.0 --port 8010 --app-dir "$HOME/miru/apps/worker"
+  start_one prowlarr 9696 /opt/Prowlarr/Prowlarr -nobrowser -data="$HOME/.config/prowlarr"
+  start_one aria2 6800 aria2c --conf-path="$HOME/.aria2/aria2.conf"
+}
+
+case "${1:-start}" in
+  start)
+    case "$ROLE" in
+      laptop) start_laptop ;;
+      pc)     start_pc ;;
+      *)      red "cannot tell which machine this is — set MIRU_ROLE=pc or laptop"; exit 1 ;;
+    esac
+    echo; status
+    ;;
+  stop)   stop_all ;;
+  status) status ;;
+  logs)   tail -f "$RUN/${2:-api}.log" ;;
+  *)      echo "usage: miru [start|stop|status|logs <service>]"; exit 1 ;;
+esac
