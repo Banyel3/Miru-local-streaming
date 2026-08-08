@@ -17,6 +17,7 @@ prefix would be meaningless there.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -53,8 +54,12 @@ def info_hash_key(info_hash: str) -> int:
 
     A live download has no library row yet, so there is no file id to use. The
     infohash is the identity everything else in this path already uses.
+
+    Hashed rather than read as hex: this value comes out of the URL path, so it
+    is whatever the caller typed, and `int(x, 16)` on that is a ValueError —
+    which inside a route is a 500 with a stack trace instead of an answer.
     """
-    return int(info_hash[:12], 16)
+    return int.from_bytes(hashlib.sha1(info_hash.encode()).digest()[:6], "big")
 
 
 def needs_remux(path: Path) -> bool:

@@ -191,3 +191,24 @@ class TestOnlyTheCompletedPrefixIsRead:
         src = tmp_path / "a.mkv"
         src.write_bytes(b"A" * 10)
         assert b"".join(remux.read_prefix(src, 9999)) == b"A" * 10
+
+
+class TestTheCacheKeyIsBuiltFromUntrustedInput:
+    def test_an_infohash_that_is_not_hex_does_not_500(self):
+        """The infohash comes out of the URL path, so anything can be in it.
+
+        Deriving the remux cache key with int(h, 16) raises ValueError on a
+        path a user can type, and an unhandled ValueError inside a route is a
+        500 with a stack trace rather than a 4xx with a reason.
+        """
+        from miru.streaming.partial import info_hash_key
+
+        for junk in ("not-a-hash", "", "zzz", "../../etc/passwd"):
+            assert isinstance(info_hash_key(junk), int)
+
+    def test_two_different_hashes_get_two_different_keys(self):
+        from miru.streaming.partial import info_hash_key
+
+        a = info_hash_key("1609fd225b0817d34cddaf6e460d70f7e39d1b1d")
+        b = info_hash_key("9881059025d401ca81799b3dffbf823f4f37c453")
+        assert a != b
