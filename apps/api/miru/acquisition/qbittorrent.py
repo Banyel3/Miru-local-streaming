@@ -167,6 +167,24 @@ class QBittorrentProvider:
         if not magnet or not magnet.startswith(("magnet:", "http://", "https://")):
             raise AcquisitionError("That is not something that can be downloaded")
 
+        # Refused before anything is sent, on purpose. qBittorrent will add a
+        # .torrent by URL quite happily but never reports the infohash back,
+        # and the infohash is what the job id has to be — so every later
+        # status, pause and cancel would look up a torrent it has never heard
+        # of. The download would run, invisibly, while the UI called it failed
+        # for the rest of its life. Adding it first and refusing afterwards
+        # would be the same failure one step later.
+        #
+        # Unexercised in practice: all four configured indexers put a magnet in
+        # magnetUrl or guid, and all 945 catalogue releases carry an infohash.
+        # An indexer that only offers .torrent files would need the file
+        # fetched and its info dict hashed; this is where that goes.
+        if not magnet.startswith("magnet:"):
+            raise AcquisitionError(
+                "That indexer only offers a .torrent file, and Miru needs a "
+                "magnet link to be able to follow the download afterwards."
+            )
+
         params = {"urls": magnet, "sequentialDownload": "true" if sequential else "false"}
         if sequential:
             # The tail carries the index in a badly muxed MP4, and without it
@@ -181,12 +199,33 @@ class QBittorrentProvider:
 
         return DownloadJob(id=info_hash_of(magnet), result_id=magnet)
 
+    def statuses(self) -> dict[str, DownloadStatus]:
+        """Every download qBittorrent knows about, by infohash.
+
+        One call for the whole poll. The downloads screen used to ask once per
+        work every few seconds, which is a request per card against a machine
+        that is often asleep — and it could only ask about downloads a work
+        still points at. A work has one download_job_id slot, so when
+        enrichment merged two cards that each had a download in flight, one
+        infohash was dropped and that download vanished from the screen with no
+        progress, no pause and no cancel while it carried on downloading.
+        Asking qBittorrent what it is actually doing cannot lose one.
+        """
+        out: dict[str, DownloadStatus] = {}
+        for t in _json("/torrents/info") or []:
+            h = str(t.get("hash") or "").lower()
+            if h:
+                out[h] = self._status_of(h, t)
+        return out
+
     def status(self, job_id: str) -> DownloadStatus:
         rows = _json("/torrents/info", {"hashes": job_id.lower()})
         if not rows:
             raise AcquisitionError("qBittorrent has no such torrent")
-        t = rows[0]
+        return self._status_of(job_id, rows[0])
 
+    @staticmethod
+    def _status_of(job_id: str, t: dict) -> DownloadStatus:
         total = int(t.get("size") or 0)
         done = int(t.get("completed") or 0)
         speed = int(t.get("dlspeed") or 0)

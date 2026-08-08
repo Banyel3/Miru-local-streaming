@@ -74,13 +74,17 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
       if (!live) return;
       if (!("error" in res)) {
         const next = new Map<number, ActiveDownload>();
-        for (const d of res.downloads) next.set(d.work_id, d);
+        // Keyed by card. A download with no card cannot be shown on the wall,
+        // and letting them all share the `null` key would mean each one hid
+        // the last — worse than leaving them out.
+        for (const d of res.downloads) if (d.work_id !== null) next.set(d.work_id, d);
 
         // The only moment Watch Now can honestly be honoured: the file has
         // finished *and* the mover has promoted it into the library. Compared
         // against a ref rather than state, so the check cannot read a stale
         // snapshot from an earlier render.
         for (const d of res.downloads) {
+          if (d.work_id === null) continue;
           const was = seenRef.current.get(d.work_id);
           if (d.in_library && was && !was.in_library) {
             setReady(d);

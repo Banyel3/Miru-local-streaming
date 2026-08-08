@@ -71,6 +71,25 @@ class TestIdentity:
             with pytest.raises(AcquisitionError):
                 qb.submit(bad)
 
+    def test_a_torrent_url_is_refused_rather_than_becoming_the_job_id(self, qb, calls):
+        # qBittorrent will happily add a .torrent by URL, but it does not tell
+        # us the infohash, and the infohash is what a job id has to be. The old
+        # code used the URL itself, so every later status/pause/cancel looked up
+        # a torrent qBittorrent has never heard of: the download ran invisibly
+        # and the UI showed it as failed forever. An honest refusal at the seam
+        # beats a job that can never be tracked.
+        with pytest.raises(AcquisitionError) as exc:
+            qb.submit("https://prowlarr.local/download/abc.torrent")
+        assert "magnet" in str(exc.value).lower()
+
+    def test_nothing_is_sent_to_qbittorrent_when_the_link_is_refused(self, qb, calls):
+        # Refusing after adding it would leave a running download nothing can
+        # reach — the same invisible-download failure, one step later.
+        seen, _ = calls
+        with pytest.raises(AcquisitionError):
+            qb.submit("https://prowlarr.local/download/abc.torrent")
+        assert seen == []
+
 
 class TestSequentialIsTheWholePoint:
     def test_watch_now_asks_for_sequential_and_the_tail_first(self, qb, calls):
@@ -273,3 +292,60 @@ class TestTheReadablePrefixOfAMultiFileTorrent:
         p = qb.playable_prefix("abc")
         assert p["size_bytes"] == 500 * mb
         assert p["file"] == "f1.bin"
+
+
+class TestAskingAboutEveryDownloadAtOnce:
+    """The downloads poll ran one HTTP call per work, every few seconds.
+
+    It also could only ever ask about downloads a work still points at, which
+    is how a merge made a running download disappear from the screen entirely
+    — no progress, no pause, no cancel, while it carried on downloading.
+    """
+
+    def _rows(self, *hashes):
+        return [
+            {
+                "hash": h,
+                "state": "downloading",
+                "progress": 0.5,
+                "size": 100,
+                "completed": 50,
+                "dlspeed": 10,
+                "eta": 60,
+                "name": f"Show {h}",
+            }
+            for h in hashes
+        ]
+
+    def test_one_call_answers_for_every_download(self, qb, calls):
+        seen, replies = calls
+        replies["/torrents/info"] = self._rows("aaa", "bbb", "ccc")
+        assert len(qb.statuses()) == 3
+
+    def test_it_asks_for_everything_rather_than_naming_hashes(self, qb, calls):
+        # Naming them would reintroduce the other half of the bug: a download
+        # no work points at could never come back.
+        seen, replies = calls
+        replies["/torrents/info"] = self._rows("aaa")
+        qb.statuses()
+        assert all("hashes" not in q for _, q in seen)
+
+    def test_hashes_are_lowercased_so_a_lookup_matches(self, qb, calls):
+        # qBittorrent returns them lowercase, but a job id came from a magnet
+        # that may not have been. A case mismatch here silently reports every
+        # download as forgotten.
+        _, replies = calls
+        replies["/torrents/info"] = self._rows("AAABBB")
+        assert "aaabbb" in qb.statuses()
+
+    def test_states_are_translated_the_same_way_as_a_single_lookup(self, qb, calls):
+        _, replies = calls
+        rows = self._rows("aaa")
+        rows[0]["state"] = "pausedDL"
+        replies["/torrents/info"] = rows
+        assert qb.statuses()["aaa"].state == "paused"
+
+    def test_nothing_downloading_is_not_an_error(self, qb, calls):
+        _, replies = calls
+        replies["/torrents/info"] = []
+        assert qb.statuses() == {}

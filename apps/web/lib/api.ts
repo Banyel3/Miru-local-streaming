@@ -396,7 +396,9 @@ export type WorkDetail = CatalogWork & {
 };
 
 export type ActiveDownload = {
-  work_id: number;
+  /** null for a download no card points at — still running, still needs its
+   *  controls, but it has no place on the wall. See /api/catalog/downloads. */
+  work_id: number | null;
   title: string;
   job_id: string;
   state: "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled";

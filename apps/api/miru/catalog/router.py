@@ -375,6 +375,18 @@ def _request_scan() -> None:
         _scan_thread.start()
 
 
+def _forgotten(w, why: str) -> dict:
+    """A card whose download the downloader has no record of."""
+    return {
+        "work_id": w.id,
+        "title": w.display_title,
+        "job_id": w.download_job_id,
+        "state": "failed",
+        "error": why[:200],
+        "progress": 0.0,
+    }
+
+
 @router.get("/downloads")
 def downloads(db: Session = Depends(get_db)):
     """Every in-flight grab, in one request.
@@ -386,31 +398,51 @@ def downloads(db: Session = Depends(get_db)):
     # Asked once, before touching the downloader at all. Without this the poll
     # tries every past download against a machine that is asleep, and the cost
     # is paid per work per poll.
+    # Asked once, before touching the downloader at all. Without this the poll
+    # tries every past download against a machine that is asleep, and the cost
+    # is paid per work per poll.
     up = pc_reachable()
+    if not up:
+        return {"pc_reachable": False, "streaming": supports_streaming(), "downloads": []}
+
+    dl = downloader()
+    try:
+        # One question for the whole screen, and — just as important — a
+        # question about what the downloader is ACTUALLY doing rather than what
+        # the catalogue remembers pointing at. A work holds one
+        # download_job_id, so a merge of two cards that each had a download in
+        # flight dropped one infohash, and that download became unreachable
+        # from the UI while it carried on running. qBittorrent still knows.
+        live = dl.statuses()
+    except AttributeError:
+        # aria2, the fallback backend. It cannot be watched while downloading
+        # either, so it is not worth a bulk endpoint of its own.
+        live = None
+    except AcquisitionError as exc:
+        log.warning("downloads poll failed: %s", exc)
+        return {"pc_reachable": up, "streaming": supports_streaming(), "downloads": []}
+
     works = list(
         db.execute(select(CatalogWork).where(CatalogWork.download_job_id.isnot(None))).scalars()
     )
-    if not works or not up:
-        return {"pc_reachable": up, "streaming": supports_streaming(), "downloads": []}
 
     out = []
+    claimed = set()
     for w in works:
-        try:
-            s = downloader().status(w.download_job_id)
-        except AcquisitionError as exc:
-            # A job the downloader has forgotten is not an error worth failing
-            # the whole poll over — the card shows it as failed and offers the
-            # picker again.
-            out.append(
-                {
-                    "work_id": w.id,
-                    "title": w.display_title,
-                    "job_id": w.download_job_id,
-                    "state": "failed",
-                    "error": str(exc)[:200],
-                    "progress": 0.0,
-                }
-            )
+        job = (w.download_job_id or "").lower()
+        claimed.add(job)
+        s = live.get(job) if live is not None else None
+        if live is None:
+            try:
+                s = dl.status(w.download_job_id)
+            except AcquisitionError as exc:
+                out.append(_forgotten(w, str(exc)))
+                continue
+        if s is None:
+            # Deleted from the downloader directly. The card has to say so
+            # rather than quietly disappearing, so the picker can be offered
+            # again instead of the user thinking it is still coming.
+            out.append(_forgotten(w, "The downloader no longer has this torrent."))
             continue
 
         # The moment a job reports done is the moment to promote it, rather than
@@ -437,6 +469,28 @@ def downloads(db: Session = Depends(get_db)):
                 "in_library": w.library_file_id is not None,
             }
         )
+
+    # Downloads no card points at. Shown rather than hidden: they are running,
+    # they are using the disk, and pause and cancel have to be reachable.
+    for job, s in (live or {}).items():
+        if job in claimed:
+            continue
+        out.append(
+            {
+                "work_id": None,
+                # No card to take a title from, and "Unknown" with a pause
+                # button next to it is not something anyone can act on.
+                "title": s.name or job[:12],
+                "job_id": job,
+                "state": s.state,
+                "progress": round(s.progress, 4),
+                "speed_bps": s.speed_bps,
+                "eta_seconds": s.eta_seconds,
+                "error": s.error,
+                "in_library": False,
+            }
+        )
+
     return {"pc_reachable": pc_reachable(), "streaming": supports_streaming(), "downloads": out}
 
 
