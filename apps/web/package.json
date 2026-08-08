@@ -8,7 +8,8 @@
     "start": "next start -p 3001",
     "lint": "next lint",
     "jassub:assets": "mkdir -p public/jassub && cp node_modules/jassub/dist/default.woff2 public/jassub/",
-    "postinstall": "npm run jassub:assets"
+    "postinstall": "npm run jassub:assets",
+    "test": "vitest run"
   },
   "dependencies": {
     "@vidstack/react": "^1.12.13",
@@ -23,6 +24,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -153,6 +153,7 @@ export function Player({
   next = null,
   restart = false,
   embedded = false,
+  onRanOut,
   children,
 }: {
   /** null mounts no media element at all: nothing has arrived yet, or nothing
@@ -171,6 +172,9 @@ export function Player({
   restart?: boolean;
   /** Sits in a page at aspect-video instead of owning the viewport. */
   embedded?: boolean;
+  /** Called instead of ending when the media runs out of bytes but the file is
+   *  still downloading. Given the position to come back to. */
+  onRanOut?: (positionS: number) => void;
   /** Drawn over the frame — the live screen's buffering state. */
   children?: ReactNode;
 }) {
@@ -199,10 +203,23 @@ export function Player({
     setVideoEl(player.current?.el?.querySelector("video") ?? null);
   }, []);
 
+  // Where a live resume comes back to. Held in a ref rather than state: it is
+  // set during the ended handler and read on the next canPlay, and a re-render
+  // between those two would remount the media element we are trying to keep.
+  const resumeTo = useRef<number | null>(null);
+
   // Resume where the last session stopped. Vidstack fires canPlay once the
   // media is seekable, which is the earliest point a seek will stick.
   const onCanPlay = useCallback(() => {
     captureVideo();
+    // A live resume outranks stored progress: it is the position from seconds
+    // ago in this same sitting, not from a previous one.
+    if (resumeTo.current !== null && player.current) {
+      player.current.currentTime = resumeTo.current;
+      resumeTo.current = null;
+      void player.current.play();
+      return;
+    }
     if (restart || progressKey === null) return;
     const saved = getProgress(progressKey);
     if (saved && saved.positionS > 0 && player.current) {
@@ -292,7 +309,19 @@ export function Player({
           }}
           onCanPlay={onCanPlay}
           onTimeUpdate={onTimeUpdate}
-          onEnded={() => next && goNext()}
+            onEnded={() => {
+              // Running out of bytes is not the same as reaching the end. On a
+              // file that is still downloading the media element reports the
+              // video as over at the edge of the completed prefix, which on a
+              // 30%-downloaded file means the player presents the end state a
+              // third of the way in. See lib/live.ts.
+              if (onRanOut) {
+                resumeTo.current = player.current?.state.currentTime ?? 0;
+                onRanOut(resumeTo.current);
+                return;
+              }
+              if (next) goNext();
+            }}
         >
           <MediaProvider>
             {tracks.map((t) => (

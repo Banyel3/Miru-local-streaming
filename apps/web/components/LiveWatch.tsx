@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { API_PUBLIC, fileSize } from "@/lib/api";
+import { endedForReal, resumeSrc } from "@/lib/live";
 import { downloadAction, liveStatus, makeWatchable } from "@/app/actions";
 import { Player } from "@/app/watch/[id]/Player";
 import { Button, ButtonLink, ProgressBar } from "@/components/ui";
@@ -29,6 +30,10 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
   const [paused, setPaused] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [stopped, setStopped] = useState(false);
+  // Bumped when the player runs out of bytes on a file that is still growing.
+  // It changes the URL, which is the only thing that makes the browser go back
+  // for the pieces that have landed since — see lib/live.ts.
+  const [resume, setResume] = useState(0);
   const sample = useRef<{ bytes: number; at: number } | null>(null);
 
   useEffect(() => {
@@ -76,6 +81,8 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
     ? Math.min(100, Math.round((status.playable_bytes / status.min_bytes) * 100))
     : 0;
   const title = status?.name ?? "Your download";
+  const base = `${API_PUBLIC}/api/stream/live/${infoHash}`;
+  const src = ready && !error ? (resume ? resumeSrc(base, resume) : base) : null;
   // The API serves the file as it is; only the container decides the provider.
   const mime = status?.file?.toLowerCase().endsWith(".webm") ? "video/webm" : "video/mp4";
 
@@ -85,7 +92,12 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
         embedded
         title={title}
         mime={mime}
-        src={ready && !error ? `${API_PUBLIC}/api/stream/live/${infoHash}` : null}
+        src={src}
+        onRanOut={() => {
+          // The status poll is what knows whether this was the end. It runs
+          // every five seconds while playing, so `status` is current.
+          if (!endedForReal(status)) setResume((n) => n + 1);
+        }}
       >
         {/* Inside the frame, over the poster. Cross-fades out; nothing moves. */}
         <div

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { groupReleases, threeChoices } from "./episodes.ts";
+import { test } from "vitest";
+import { groupReleases, threeChoices } from "./episodes";
 import type { CatalogRelease } from "./api";
 
 /**
- * Run with: node --test apps/web/lib/
+ * Run with: npm test
  *
  * These name the failures they prevent rather than restating the code: each one
  * is a way the episode list stops being usable, not a way the function stops
