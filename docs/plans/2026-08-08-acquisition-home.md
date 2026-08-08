@@ -1,6 +1,6 @@
 # Plan — the acquisition home screen
 
-Status: draft for review
+Status: executed — all 13 steps. See STATUS.md
 Date: 2026-08-08
 
 The ask: make the home screen a browse wall instead of the library list. Rows of

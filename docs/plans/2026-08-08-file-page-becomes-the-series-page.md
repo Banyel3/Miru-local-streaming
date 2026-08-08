@@ -1,6 +1,6 @@
 # Plan — the file page should be the series page
 
-Status: draft
+Status: executed except §5 (episode list in the download sheet). See STATUS.md
 Date: 2026-08-08
 
 Three reports, one underlying cause: **the library and the catalogue know

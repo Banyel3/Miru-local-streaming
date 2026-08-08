@@ -1,6 +1,6 @@
 # Debug — nameless cards, "random" sorting, and downloads that never land
 
-Status: diagnosed, fixes specified
+Status: executed — all three fixes shipped. See STATUS.md
 Date: 2026-08-08
 
 Three reports, three different causes. One of them is not a bug in the thing

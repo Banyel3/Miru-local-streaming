@@ -1,6 +1,6 @@
 # Plan — one card per series, the way Netflix does it
 
-Status: draft
+Status: executed; §1 catalog_series superseded by merging works on provider id. See STATUS.md
 Date: 2026-08-08
 
 The ask: anime episodes should be one series, not a card per episode. The

@@ -1,6 +1,6 @@
 # Plan — why nothing plays, and why One Piece is two cards
 
-Status: draft
+Status: executed — §1 live MKV and §2a title cleaning landed 2026-08-08. See STATUS.md
 Date: 2026-08-08
 
 Six reported problems. One of them turned out to have a cause nobody guessed —

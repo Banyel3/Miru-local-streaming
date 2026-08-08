@@ -1,6 +1,6 @@
 # Plan — play immediately, and stop losing what the indexers drop
 
-Status: draft
+Status: executed except §6 (per-category refresh). See STATUS.md
 Date: 2026-08-08
 
 Two asks. The first is a UX defect with a straightforward fix. The second is a
