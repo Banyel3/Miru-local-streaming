@@ -398,9 +398,6 @@ def downloads(db: Session = Depends(get_db)):
     # Asked once, before touching the downloader at all. Without this the poll
     # tries every past download against a machine that is asleep, and the cost
     # is paid per work per poll.
-    # Asked once, before touching the downloader at all. Without this the poll
-    # tries every past download against a machine that is asleep, and the cost
-    # is paid per work per poll.
     up = pc_reachable()
     if not up:
         return {"pc_reachable": False, "streaming": supports_streaming(), "downloads": []}

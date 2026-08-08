@@ -1,3 +1,4 @@
+import os
 import time
 from pathlib import Path
 
@@ -13,9 +14,14 @@ def _aged(path: Path, seconds: float) -> None:
 
 
 def _counts(result: dict) -> dict:
-    """Only the counters. `names` is reported so the scan can link promoted
-    files to their catalog cards; it is not what these tests are about."""
-    return {k: v for k, v in result.items() if k != "names"}
+    """Only the two counters these tests are about.
+
+    `names` is reported so the scan can link promoted files to their catalog
+    cards, and `skipped` counts entries that hold no video — both are asserted
+    where they are the point, and neither should make every settle-timing test
+    fail when the payload gains a field.
+    """
+    return {k: result[k] for k in ("promoted", "waiting")}
 
 
 def test_a_file_still_being_written_is_not_settled(tmp_path):
@@ -84,3 +90,75 @@ def test_dotfiles_are_ignored(tmp_path):
     hidden = inc / ".from-pc"; hidden.write_bytes(b"x"); _aged(hidden, 300)
     assert _counts(promote(inc, lib, settle_seconds=120)) == {"promoted": 0, "waiting": 0}
     assert hidden.exists()
+
+
+class TestOnlyVideoReachesTheLibrary:
+    """A torrent contains whatever its maker put in it.
+
+    `promote()` moved every settled entry wholesale, so a `PC/Games` grab
+    landed as a directory of executables inside /mnt/storage/media — which is
+    also the directory a publicly-reachable file browser has been pointed at
+    before now. The scanner only indexes video, so nothing appeared in Miru:
+    the files were simply there, and nothing said so.
+
+    Filtering the search results is the real fix and this is the second lock.
+    Nothing is deleted — an entry that is not video is left in incoming, where
+    it is visible and the user can decide.
+    """
+
+    def _settled(self, path: Path):
+        old = time.time() - 10_000
+        for p in [path, *path.rglob("*")] if path.is_dir() else [path]:
+            os.utime(p, (old, old))
+
+    def test_a_film_is_promoted(self, tmp_path):
+        inc, lib = tmp_path / "in", tmp_path / "lib"
+        inc.mkdir(); lib.mkdir()
+        (inc / "Film.2026.1080p.mkv").write_bytes(b"x")
+        self._settled(inc / "Film.2026.1080p.mkv")
+        assert promote(inc, lib)["promoted"] == 1
+        assert (lib / "Film.2026.1080p.mkv").exists()
+
+    def test_a_folder_of_executables_is_not_promoted(self, tmp_path):
+        inc, lib = tmp_path / "in", tmp_path / "lib"
+        inc.mkdir(); lib.mkdir()
+        game = inc / "NARUTO X BORUTO Ultimate Ninja STORM-RUNE"
+        game.mkdir()
+        (game / "setup.exe").write_bytes(b"MZ")
+        (game / "data.bin").write_bytes(b"x")
+        self._settled(game)
+        assert promote(inc, lib)["promoted"] == 0
+        assert game.exists(), "it was deleted rather than left alone"
+        assert not (lib / game.name).exists()
+
+    def test_a_lone_executable_is_not_promoted(self, tmp_path):
+        inc, lib = tmp_path / "in", tmp_path / "lib"
+        inc.mkdir(); lib.mkdir()
+        (inc / "installer.exe").write_bytes(b"MZ")
+        self._settled(inc / "installer.exe")
+        assert promote(inc, lib)["promoted"] == 0
+
+    def test_a_release_folder_keeps_its_subtitles_and_extras(self, tmp_path):
+        # The whole folder moves once it holds video. Subtitles sit beside the
+        # file and are wanted; splitting them out would lose them.
+        inc, lib = tmp_path / "in", tmp_path / "lib"
+        inc.mkdir(); lib.mkdir()
+        rel = inc / "Show.S01E01"
+        rel.mkdir()
+        (rel / "Show.S01E01.mkv").write_bytes(b"x")
+        (rel / "Show.S01E01.ass").write_bytes(b"x")
+        (rel / "readme.nfo").write_bytes(b"x")
+        self._settled(rel)
+        assert promote(inc, lib)["promoted"] == 1
+        assert (lib / "Show.S01E01" / "Show.S01E01.ass").exists()
+
+    def test_an_unpromotable_entry_is_not_counted_as_waiting_forever(self, tmp_path):
+        # `waiting` means "come back to it". A game never becomes a film, so
+        # counting it as waiting would report work in progress that never ends.
+        inc, lib = tmp_path / "in", tmp_path / "lib"
+        inc.mkdir(); lib.mkdir()
+        (inc / "installer.exe").write_bytes(b"MZ")
+        self._settled(inc / "installer.exe")
+        got = promote(inc, lib)
+        assert got["promoted"] == 0
+        assert got.get("skipped") == 1

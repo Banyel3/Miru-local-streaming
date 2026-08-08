@@ -39,6 +39,26 @@ def _has_partials(entry: Path) -> bool:
     return any(p.suffix.lower() in PARTIAL_SUFFIXES for p in entry.rglob("*"))
 
 
+def holds_video(entry: Path) -> bool:
+    """Whether this entry is, or contains, something the library can play.
+
+    A torrent contains whatever its maker put in it, and the categories that
+    reach the downloader are only as good as the filter in front of them. A
+    `PC/Games` grab used to land as a directory of executables inside the media
+    library — where the scanner ignored it, so nothing in Miru ever said it was
+    there.
+
+    Reuses the scanner's own list rather than a second copy of it: two lists of
+    video extensions drift, and the one that decides what is playable is the
+    one that should decide what gets moved.
+    """
+    from miru.library.scanner import VIDEO_EXTENSIONS
+
+    if entry.is_file():
+        return entry.suffix.lower() in VIDEO_EXTENSIONS
+    return any(p.suffix.lower() in VIDEO_EXTENSIONS for p in entry.rglob("*") if p.is_file())
+
+
 def is_settled(entry: Path, settle_seconds: float, now: float | None = None) -> bool:
     """Has this entry been untouched long enough to call it finished?
 
@@ -92,9 +112,9 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
     single undeletable file should not stop the rest of a scan.
     """
     if not incoming.is_dir() or not library.is_dir():
-        return {"promoted": 0, "waiting": 0, "names": []}
+        return {"promoted": 0, "waiting": 0, "skipped": 0, "names": []}
 
-    promoted = waiting = 0
+    promoted = waiting = skipped = 0
     # Reported so the scan can point each catalog card at the file it became.
     names: list[str] = []
     for entry in sorted(incoming.iterdir()):
@@ -103,6 +123,15 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
 
         if not is_settled(entry, settle_seconds):
             waiting += 1
+            continue
+
+        if not holds_video(entry):
+            # Left where it is rather than deleted. Nothing here is certain
+            # enough to destroy a download on — and unlike `waiting`, this is
+            # not a thing to come back to: an installer never becomes a film,
+            # so counting it as waiting would report work that never ends.
+            log.warning("not promoting %s — it holds no video", entry.name)
+            skipped += 1
             continue
 
         target = library / entry.name
@@ -124,4 +153,4 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
             log.warning("could not promote %s: %s", entry.name, exc)
             waiting += 1
 
-    return {"promoted": promoted, "waiting": waiting, "names": names}
+    return {"promoted": promoted, "waiting": waiting, "skipped": skipped, "names": names}

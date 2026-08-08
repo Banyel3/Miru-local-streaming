@@ -148,7 +148,7 @@ class TestPromotingDownloads:
         inc, lib = tmp_path / "incoming", tmp_path / "media"
         inc.mkdir(); lib.mkdir()
         (inc / "Downloading.mkv").write_bytes(b"x")   # just written
-        assert promote(inc, lib, settle_seconds=120) == {"promoted": 0, "waiting": 1, "names": []}
+        assert promote(inc, lib, settle_seconds=120) == {"promoted": 0, "waiting": 1, "skipped": 0, "names": []}
 
     def test_an_aria2_control_file_marks_the_whole_entry_unfinished(self, tmp_path):
         # aria2 leaves .aria2 beside an unfinished download and removes it on
