@@ -85,3 +85,48 @@ class TestATitleThatCannotIdentifyAnything:
         # a one-token title is what got matched to the wrong show.
         got = parse("[1080p_AVC][简体][繁體]", "anime")
         assert len(got.title) <= 3 or got.title == ""
+
+
+class TestNamesThatMerelyContainCJK:
+    """Most CJK-bearing releases are ordinary anitopy shapes.
+
+    `[ANi] BLACK TORCH 闇黑燈火 - 06 [1080P][Baha]` is the standard
+    `[Group] Title - NN [tags]` layout that happens to carry a Chinese
+    alternate title. Routing it away from anitopy on the strength of one Han
+    character made it worse, not better: the group and the tags leaked into the
+    title and the episode was lost. Every one of these is a real release name.
+    """
+
+    def test_a_group_bracket_and_tags_do_not_leak_into_the_title(self):
+        got = parse("[ANi]  BLACK TORCH 闇黑燈火 - 06 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4", "anime")
+        assert got.title == "BLACK TORCH"
+        assert got.episode == 6
+
+    def test_a_year_in_brackets_is_not_read_as_an_episode(self):
+        # `Mahou Shoujo Lalabel [1980] (S01E01-07)` was parsed as episode 1980.
+        got = parse("Mahou Shoujo Lalabel [1980] (S01E01-07) [480p]", "anime")
+        assert got.title == "Mahou Shoujo Lalabel"
+        assert got.episode != 1980
+        assert (got.episode, got.episode_end) == (1, 7)
+
+    def test_a_romaji_title_beside_a_native_one_keeps_the_romaji(self):
+        got = parse("[GM-Team][国漫][完美世界剧场版 九劫焚天][Perfect World][Movie]", "anime")
+        assert got.title == "Perfect World"
+
+    def test_a_film_keeps_the_word_that_makes_it_a_film(self):
+        # Dropping "Movie" would merge the film into the series.
+        got = parse("[7³ACG] Youjo Senki 幼女戦記 Movie (2019) [BDRip]", "anime")
+        assert got.title == "Youjo Senki Movie"
+        assert got.year == 2019
+
+    def test_a_purely_chinese_title_is_kept_as_it_is(self):
+        # Nothing else to fall back to, and it still groups its own releases.
+        got = parse("[ANi] 小書痴的下剋上 - 17 [1080P][Baha]", "anime")
+        assert got.episode == 17
+        assert "1080" not in got.title and "ANi" not in got.title
+
+    def test_a_seasonal_banner_is_not_the_show(self):
+        # ★07月新番★ means "July season". It was becoming the title.
+        got = parse("【喵萌奶茶屋】★07月新番★[猫与龙 / Neko to Ryuu][04][1080p][简日双语]", "anime")
+        assert got.title == "Neko to Ryuu"
+        assert got.episode == 4

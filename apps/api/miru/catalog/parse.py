@@ -124,6 +124,35 @@ def _prefer_the_latin_name(name: str) -> str:
     return max(kana, key=len) if kana else name
 
 
+# ★07月新番★ — "July season", a banner some groups put in front of the title.
+_SEASON_BANNER = re.compile(r"★[^★]*★")
+
+
+def _light_clean(name: str) -> str:
+    """Take the CJK furniture off, and leave the shape alone otherwise.
+
+    Most CJK-bearing releases are ordinary anitopy shapes that merely carry a
+    Chinese alternate title — `[ANi] BLACK TORCH 闇黑燈火 - 06 [1080P][Baha]` is
+    `[Group] Title - NN [tags]` and anitopy reads it perfectly. Routing those
+    away from anitopy on the strength of one Han character made them worse: the
+    group and the tags leaked into the title and the episode was lost.
+
+    So the brackets and the ordering are preserved and only the tokens anitopy
+    cannot know about are removed.
+    """
+    if not _CJK.search(name):
+        return name
+    t = name.replace("【", "[").replace("】", "]").replace("（", "(").replace("）", ")")
+    t = _SUBBER.sub(" ", t)
+    t = _SEASON_BANNER.sub(" ", t)
+    t = _CJK_EPISODE.sub(" ", t)
+    t = _CJK_TAGS.sub(" ", t)
+    t = re.sub(r"第\s*[0-9一二三四五六七八九十]+\s*[季期部]", " ", t)
+    # An underscore separates the native and romaji names, and so does a slash.
+    t = t.replace("_", " ")
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def _parse_cjk(name: str) -> Parsed:
     """Parse a release named by a Chinese or Japanese fansub group.
 
@@ -140,15 +169,13 @@ def _parse_cjk(name: str) -> Parsed:
     them parsed to `CHS`, the subtitle-language tag, and TMDB answered
     *CHS: Dash for the Cash*.
     """
-    t = name.replace("【", "[").replace("】", "]").replace("（", "(").replace("）", ")")
-    t = _SUBBER.sub(" ", t)
-    t = _CJK_TAGS.sub(" ", t)
-    t = re.sub(r"第\s*[0-9一二三四五六七八九十]+\s*[季期部]", " ", t)
-    first, last = _cjk_episode(t)
-    t = _CJK_EPISODE.sub(" ", t)
-    # An underscore separates the native and romaji names, and so does a slash:
-    # `葬送的芙莉莲_Sousou no Frieren` is one show written twice, not one word.
-    t = t.replace("_", " ").replace("/", " ")
+    # The same cleaning anitopy is given, so the two paths cannot disagree
+    # about what counts as furniture. The episode is read off the original,
+    # since the clean removes the token that carries it.
+    first, last = _cjk_episode(name)
+    # A slash separates the same show's two names for the same reason an
+    # underscore does: `猫与龙 / Neko to Ryuu` is one show written twice.
+    t = _light_clean(name).replace("/", " ")
 
     # Keep only the parts that could be a name. Splitting on the delimiters
     # rather than stripping them keeps `[1080p]` separable from the title,
@@ -231,11 +258,13 @@ def _resolution_of(name: str) -> str | None:
 def _parse_anime(name: str) -> Parsed:
     import anitopy
 
-    # The CJK convention is a different shape and anitopy does not read it.
-    if _CJK.search(name):
+    cleaned = _light_clean(name)
+    raw = anitopy.parse(cleaned) or {}
+    if not raw.get("anime_title"):
+        # anitopy could not find a title at all, which is what the fully CJK
+        # conventions do to it — `[千夏字幕组][葬送的芙莉莲_Sousou no Frieren]
+        # [第29-38话]` has no shape it recognises. Read it directly instead.
         return _parse_cjk(name)
-
-    raw = anitopy.parse(name) or {}
     eps = raw.get("episode_number")
     if isinstance(eps, list):
         nums = [int(e) for e in eps if str(e).isdigit()]
@@ -245,12 +274,18 @@ def _parse_anime(name: str) -> Parsed:
     else:
         first, last = None, None
 
+    if first is None:
+        # 第29-38话, which the clean above removed before anitopy saw it.
+        first, last = _cjk_episode(name)
+
     season = raw.get("anime_season")
     if isinstance(season, list):
         season = season[0] if season else None
 
     return Parsed(
-        title=_clean(raw.get("anime_title") or name),
+        # Where a release names the show natively and in romaji, keep the
+        # romaji: it is what a provider indexes.
+        title=_clean(_prefer_the_latin_name(raw.get("anime_title") or cleaned)),
         year=int(raw["anime_year"]) if str(raw.get("anime_year", "")).isdigit() else None,
         season=int(season) if str(season).isdigit() else None,
         episode=first,
