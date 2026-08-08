@@ -25,6 +25,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from miru.acquisition.downloader import downloader, supports_streaming
+from miru.streaming import remux
 from miru.acquisition.provider import AcquisitionError
 from miru.core.config import settings
 
@@ -40,6 +41,33 @@ CHUNK = 256 * 1024
 MIN_PLAYABLE_BYTES = 24 * 1024 * 1024
 
 _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
+
+# What a browser will actually decode from a <video> src. Matroska is not on the
+# list however good the codecs inside it are, and neither is AVI — the container
+# decides this, not the codec.
+_BROWSER_CONTAINERS = {".mp4", ".m4v", ".webm"}
+
+
+def info_hash_key(info_hash: str) -> int:
+    """A stable integer id for the remux cache, which is keyed by file id.
+
+    A live download has no library row yet, so there is no file id to use. The
+    infohash is the identity everything else in this path already uses.
+    """
+    return int(info_hash[:12], 16)
+
+
+def needs_remux(path: Path) -> bool:
+    """Whether handing this file to a browser would simply fail.
+
+    The live stream used to serve the growing file exactly as it sat on disk and
+    label it `video/x-matroska`, which is honest and useless: no browser plays
+    Matroska, so every MKV download — most anime — was unwatchable for the whole
+    time it was downloading. The label being truthful only made the failure
+    silent, because the player was handed a container it refuses and had nothing
+    to say about it.
+    """
+    return path.suffix.lower() not in _BROWSER_CONTAINERS
 
 
 def _local_path(prefix: dict) -> Path | None:
@@ -126,6 +154,35 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
     if ceiling <= 0:
         raise HTTPException(416, "Nothing is playable yet.")
 
+    if needs_remux(path):
+        # Remuxed to a fragmented MP4 rather than served as it lies. The bytes
+        # are Matroska and no browser decodes that, so serving them was a
+        # guaranteed failure with an honest label on it.
+        #
+        # Keyed on the ceiling, so each time the player runs out and asks again
+        # — see lib/live.ts and the `?resume=` it appends — it gets a longer
+        # copy rather than the same short one for the rest of the download.
+        made = remux.ensure(info_hash_key(info_hash), path, prefix_bytes=ceiling)
+        if made == "failed":
+            raise HTTPException(
+                502, remux.error(info_hash_key(info_hash), ceiling)
+                or "Could not make this file playable."
+            )
+        playable = remux.cached_path(info_hash_key(info_hash), path, ceiling)
+        if made != "ready" or not playable.exists():
+            # "Not yet", not "never". The buffering overlay already knows how to
+            # sit through a wait; zeros or a refused container would read to the
+            # user as a corrupt download.
+            raise HTTPException(
+                503,
+                "Making this playable in your browser — it will start shortly.",
+                headers={"Retry-After": "5"},
+            )
+        path = playable
+        # The remux is a whole, finished file: its own length is the ceiling,
+        # and there is nothing beyond it to protect the player from.
+        total = ceiling = path.stat().st_size
+
     start, end = 0, ceiling - 1
     if range_header:
         # fullmatch, not match: "bytes=0-10,20-30" used to be accepted and then
@@ -179,7 +236,7 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
     return StreamingResponse(
         body(),
         status_code=206,
-        media_type="video/mp4" if path.suffix.lower() in {".mp4", ".m4v"} else "video/x-matroska",
+        media_type="video/webm" if path.suffix.lower() == ".webm" else "video/mp4",
         headers={
             "Content-Range": f"bytes {start}-{end}/{total}",
             "Content-Length": str(length),

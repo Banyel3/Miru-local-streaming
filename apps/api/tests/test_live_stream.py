@@ -18,7 +18,10 @@ def growing(tmp_path, monkeypatch):
 
     inc = tmp_path / "incoming"
     inc.mkdir()
-    f = inc / "Show.S01E01.1080p.mkv"
+    # An MP4 on purpose: everything in this file is about the Range ceiling, and
+    # an MKV would route through the remux instead — which has its own tests in
+    # test_live_mkv.py. Keeping it here would test ffmpeg, not the ceiling.
+    f = inc / "Show.S01E01.1080p.mp4"
     f.write_bytes(bytes(range(256)) * 40)          # 10240 bytes on disk
     monkeypatch.setattr(settings, "incoming_path", str(inc))
     monkeypatch.setattr(settings, "downloader", "qbittorrent")
@@ -28,8 +31,8 @@ def growing(tmp_path, monkeypatch):
 def fake_prefix(**kw):
     base = {
         "info_hash": "abc",
-        "name": "Show.S01E01.1080p.mkv",
-        "file": "Show.S01E01.1080p.mkv",
+        "name": "Show.S01E01.1080p.mp4",
+        "file": "Show.S01E01.1080p.mp4",
         "size_bytes": 20480,          # half of it has not arrived
         "save_path": "/downloads",
         "content_path": "",
