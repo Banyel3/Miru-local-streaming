@@ -14,7 +14,7 @@ file is current. The reversals are recorded in §8.
 │  i5-1155G7 · 932 GB HDD · wifi          │        │  Ryzen 5700G · RTX 5060      │
 │                                          │        │  Windows 11 + WSL2           │
 │  Next.js          :3001                  │        │                              │
-│  FastAPI          :8000   ── HTTP ─────────────>  │  NVENC worker      :8001     │
+│  FastAPI          :8000   ── HTTP ─────────────>  │  NVENC worker      :8010     │
 │  Postgres         :5432   <───── HLS ───────────  │  movies-downloader :5000     │
 │  media  /mnt/storage                     │        │                              │
 │                                          │  <──── mounts /mnt/storage (NFS)      │
@@ -169,7 +169,7 @@ moving to a different network entirely.
 Use the tailnet IP:
 
 ```bash
-MIRU_TRANSCODE_WORKER=http://100.67.44.13:8001
+MIRU_TRANSCODE_WORKER=http://100.67.44.13:8010
 ```
 
 MagicDNS names are **not** used here. Verified on this laptop: `/etc/resolv.conf`
@@ -217,7 +217,7 @@ tailnet address** by default. Three ways out, best first:
 Verify from the laptop, whichever route you take:
 
 ```bash
-curl -m 5 http://100.67.44.13:8001/health
+curl -m 5 http://100.67.44.13:8010/health
 ```
 
 ---

@@ -94,17 +94,27 @@ enable `sudo tailscale set --accept-dns=true` on both machines first and confirm
 This is the assumption the entire design rests on, and it is the one most likely
 to be wrong. Test it with a throwaway listener before installing anything.
 
+> **Run it from an empty directory.** `http.server` serves the current working
+> directory to anyone who can reach the port. Started from your home or from
+> `/mnt/c/Users/<you>`, it publishes `.ssh/`, `.gitconfig`, `.config/` and every
+> other credential file you own to the whole tailnet, unauthenticated.
+
 ```bash
 # on the PC, inside WSL2
-python3 -m http.server 8001
+mkdir -p /tmp/miru-nettest && cd /tmp/miru-nettest
+echo "reachable" > index.html
+python3 -m http.server 8010
 ```
 
 ```bash
 # on the laptop
-curl -m 5 http://100.67.44.13:8001/
+curl -m 5 http://100.67.44.13:8010/
 ```
 
-**Expect** a directory listing. **If it hangs or refuses**, stop here — nothing
+Expect the word `reachable`. Stop the server with Ctrl-C as soon as it works —
+it has no authentication and no reason to keep running.
+
+**If it hangs or refuses**, stop here — nothing
 below will work. Check in this order: is Tailscale up on the PC
 (`tailscale status` should list it as online, not offline); did WSL actually
 restart after `.wslconfig` was edited (`wsl --shutdown` from PowerShell, then
@@ -127,9 +137,10 @@ netstat -ano | findstr :8001
 tasklist /FI "PID eq <the-pid-from-above>"
 ```
 
-Then either free the port, or pick a different one for the worker and use it
-consistently in `MIRU_TRANSCODE_WORKER` and the test above. Any free high port
-works — there is nothing special about 8001.
+On this setup port 8001 is held by **VS Code Server** (the remote-SSH backend),
+which you do not want to kill. The worker uses **8010** throughout this document
+for that reason. Any free high port works; just keep it consistent between the
+worker's `--port` and `MIRU_TRANSCODE_WORKER`.
 
 ---
 
@@ -185,13 +196,13 @@ EOF
 Run it:
 
 ```bash
-cd ~/miru/apps/worker && ../../.venv/bin/uvicorn miru_worker.main:app --host 0.0.0.0 --port 8001
+cd ~/miru/apps/worker && ../../.venv/bin/uvicorn miru_worker.main:app --host 0.0.0.0 --port 8010
 ```
 
 **Check, from the laptop:**
 
 ```bash
-curl -m 5 http://100.67.44.13:8001/health
+curl -m 5 http://100.67.44.13:8010/health
 ```
 
 **Expect** `"encoder":"h264_nvenc"`. If it says `libx264`, the worker's own NVENC
@@ -204,7 +215,7 @@ worker runs in.
 
 ```bash
 # on the laptop, in .env
-MIRU_TRANSCODE_WORKER=http://100.67.44.13:8001
+MIRU_TRANSCODE_WORKER=http://100.67.44.13:8010
 # How the WORKER reaches this API. Must not be localhost — that would point the
 # PC at itself.
 MIRU_PUBLIC_API_URL=http://100.71.150.101:8000
@@ -319,7 +330,7 @@ mount the NFS share, then start both services:
 #!/usr/bin/env bash
 mountpoint -q /mnt/storage || mount -t nfs 100.71.150.101:/mnt/storage /mnt/storage
 cd /home/<user>/miru/apps/worker && /home/<user>/miru/.venv/bin/uvicorn \
-  miru_worker.main:app --host 0.0.0.0 --port 8001 &
+  miru_worker.main:app --host 0.0.0.0 --port 8010 &
 cd /home/<user>/movies-downloader && HOST=127.0.0.1 PORT=5000 npm start &
 ```
 
@@ -334,7 +345,7 @@ until someone wakes it — everything the laptop can serve keeps working.
 | Symptom | Where to look |
 |---|---|
 | `apt`, `sudo` or `python3` "not found" in WSL | You are in Docker Desktop's VM, not Ubuntu. Step 0 |
-| `curl http://100.67.44.13:8001/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
+| `curl http://100.67.44.13:8010/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
 | Worker reports `"encoder":"libx264"` | Step 2, in the worker's own shell. NVENC probe failed |
 | Player shows a CORS error | `WORKER_WEB_ORIGIN` does not match the browser's origin exactly, scheme and port included |
 | Worker returns 403 | `WORKER_ALLOWED_SOURCE_PREFIXES` does not cover `MIRU_PUBLIC_API_URL` |
