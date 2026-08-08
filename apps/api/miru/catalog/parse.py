@@ -298,7 +298,13 @@ def _parse_anime(name: str) -> Parsed:
 def _parse_general(name: str) -> Parsed:
     from guessit import guessit
 
-    raw = guessit(name)
+    # guessit reads a release name as a path, so a slash inside a title is a
+    # directory separator: `Ultraman R/B` becomes directory `Ultraman R`
+    # holding file `B`, and the show is called `B`. Live, that was a card
+    # titled `B` with 7 releases on it — unrecognisable, unsearchable, and it
+    # groups with anything else that parses to one letter. A release name is
+    # not a path.
+    raw = guessit(name.replace("/", " "))
 
     def one(key):
         v = raw.get(key)

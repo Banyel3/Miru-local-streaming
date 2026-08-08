@@ -130,3 +130,27 @@ class TestNamesThatMerelyContainCJK:
         got = parse("【喵萌奶茶屋】★07月新番★[猫与龙 / Neko to Ryuu][04][1080p][简日双语]", "anime")
         assert got.title == "Neko to Ryuu"
         assert got.episode == 4
+
+
+class TestASlashIsNotAPathSeparator:
+    """guessit parses a release name as if it were a filename.
+
+    So `Ultraman R/B` reads as directory `Ultraman R` containing file `B`, and
+    the show's name becomes `B`. Live: a card titled `B` holding 7 releases of
+    Ultraman R/B, which is unrecognisable and unsearchable, and it groups with
+    anything else that parses to a single letter.
+    """
+
+    def test_a_slash_inside_a_title_does_not_become_the_title(self):
+        got = parse("[MQS] Ultraman R/B - 07 (Filipino)", "series")
+        assert got.title != "B"
+        assert "Ultraman" in got.title
+
+    def test_the_anime_path_reads_it_the_same_way(self):
+        got = parse("[MQS] Ultraman R/B - 07 (Filipino)", "anime")
+        assert "Ultraman" in got.title
+
+    def test_a_normal_scene_name_is_unaffected(self):
+        got = parse("Frieren Beyond Journeys End S02E07 2023 1080p DSNP WEB-DL", "series")
+        assert "Frieren" in got.title
+        assert got.episode == 7
