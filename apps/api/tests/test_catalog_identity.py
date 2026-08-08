@@ -6,6 +6,12 @@ English against native script:
 
     "Youjo Senki 幼女戦記"  "Saga of Tanya the Evil"  "Youjo Senki 幼女戦記 Movie"
 
+The release names still carry the native title; the parser now drops it, because
+a provider indexes the Japanese native and not the Chinese one, and a search
+term holding both matches neither. So the lookups below are keyed on what the
+parser actually produces — "Youjo Senki" — which is the string the live AniList
+measurement in docs/plans/2026-08-08-series-identity.md resolved to 21613.
+
 Those share no characters, so no amount of string cleaning merges them. AniList
 says all three are 21613. Every test here is that fact turned into behaviour.
 """
@@ -60,7 +66,7 @@ class TestIdentityComesFromTheProvider:
 
         calls = []
         monkeypatch.setattr(enrich, "lookup", fake_lookup(calls, {
-            "Youjo Senki 幼女戦記": TANYA,
+            "Youjo Senki": TANYA,
             "Saga of Tanya the Evil": TANYA,
         }))
         enrich.backfill(db_session)
@@ -79,14 +85,14 @@ class TestIdentityComesFromTheProvider:
         # refresh must not stall behind a rate-limited API.
         calls = []
         monkeypatch.setattr(enrich, "lookup", fake_lookup(calls, {
-            "Youjo Senki 幼女戦記": TANYA,
+            "Youjo Senki": TANYA,
         }))
         refresh(db_session, FakeProvider([[result("[Sub] Youjo Senki 幼女戦記 - 01 [1080p]")]]))
         enrich.backfill(db_session)
         calls.clear()
 
         db_session.add(TitleResolution(
-            kind="anime", query="youjo senki 幼女戦記 movie",
+            kind="anime", query="youjo senki movie",
             provider="anilist", provider_id="21613", data=TANYA,
         ))
         db_session.commit()
@@ -115,7 +121,7 @@ class TestIdentityComesFromTheProvider:
     def test_two_different_shows_are_not_merged_by_the_provider(self, db_session, monkeypatch):
         frieren = {**TANYA, "provider_id": "154587", "display_title": "Frieren", "year": 2023}
         monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
-            "Youjo Senki 幼女戦記": TANYA, "Frieren": frieren,
+            "Youjo Senki": TANYA, "Frieren": frieren,
         }))
         refresh(db_session, FakeProvider([[
             result("[Sub] Youjo Senki 幼女戦記 - 01 [1080p]"),
@@ -188,7 +194,7 @@ class TestATitleThatOnlyAlmostMatches:
     def test_the_match_is_checked_against_every_name_not_the_shown_one(self, monkeypatch):
         # AniList shows English and the release names romaji, so checking the
         # displayed title alone rejects the merge this exists to make: "Saga of
-        # Tanya the Evil" is nowhere in "Youjo Senki 幼女戦記 Movie".
+        # Tanya the Evil" is nowhere in "Youjo Senki Movie".
         monkeypatch.setattr(enrich, "_anilist", lambda t: (
             {**TANYA, "names": ["Youjo Senki", "Saga of Tanya the Evil", "幼女戦記"]}
             if t == "Youjo Senki" else None
@@ -258,7 +264,7 @@ class TestRenamingACardMovesItsGroupingKey:
         # the Evil" while still grouping as "youjo senki" — and the next release
         # under the provider's name made a second, identical-looking card.
         monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
-            "Youjo Senki 幼女戦記": TANYA,
+            "Youjo Senki": TANYA,
         }))
         refresh(db_session, FakeProvider([[result("[Sub] Youjo Senki 幼女戦記 - 01 [1080p]")]]))
         enrich.backfill(db_session)
@@ -277,7 +283,7 @@ class TestOnePassResolvesManyCards:
         # earlier merge had deleted, and flushing one raised StaleDataError —
         # 400 works in, and every work after it went unresolved.
         monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
-            "Youjo Senki 幼女戦記": TANYA,
+            "Youjo Senki": TANYA,
             "Saga of Tanya the Evil": TANYA,
             "Frieren": {**TANYA, "provider_id": "154587", "display_title": "Frieren"},
         }))
@@ -328,7 +334,7 @@ class TestFilmsAreToldFromShowsWithoutAFifthPill:
         film = {**TANYA, "provider_id": "21", "display_title": "One Piece Film: Red",
                 "format": "MOVIE", "episode_count": None}
         monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
-            "Youjo Senki 幼女戦記": TANYA, "One Piece Film Red": film,
+            "Youjo Senki": TANYA, "One Piece Film Red": film,
         }))
         refresh(db_session, FakeProvider([[
             result("[Sub] Youjo Senki 幼女戦記 - 01 [1080p]"),
