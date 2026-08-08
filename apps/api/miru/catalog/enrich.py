@@ -71,6 +71,32 @@ def _throttle() -> None:
         _last_call = time.monotonic()
 
 
+class ProviderUnreachable(Exception):
+    """We could not ask, as distinct from having asked and been told no.
+
+    The distinction is the whole point of this class. Enrichment records its
+    misses so the backfill does not ask about the same unparseable release
+    every half hour forever — but that record is permanent, and a work marked
+    as asked is never selected again. Recording a dropped connection as a miss
+    therefore retires a card for the life of the database. Measured: the wifi
+    dropping for the forty seconds a pass runs marked forty works "none".
+    """
+
+
+def _unreachable(exc: Exception) -> bool:
+    """Whether this failure means the provider never answered.
+
+    A 404 IS an answer — TMDB says it that way for a title it does not have,
+    and treating that as an outage would make the backfill retry a genuine miss
+    forever, which is the bug this file already had in the other direction.
+    Everything else — 5xx, 429, DNS, timeouts, a body that is not JSON — means
+    the question did not land.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code not in (400, 401, 403, 404)
+    return True
+
+
 def _get(url: str, data: bytes | None = None, headers: dict | None = None):
     _throttle()
     req = urllib.request.Request(url, data=data, headers={**UA, **(headers or {})})
@@ -98,7 +124,9 @@ def _anilist(title: str) -> dict | None:
         body = json.dumps({"query": query, "variables": {"s": title}}).encode()
         d = _get(ANILIST, body, {"Content-Type": "application/json", "Accept": "application/json"})
         m = (d.get("data") or {}).get("Media")
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError) as exc:
+        if _unreachable(exc):
+            raise ProviderUnreachable(f"anilist: {exc}") from exc
         return None
     if not m:
         return None
@@ -129,7 +157,9 @@ def _anilist(title: str) -> dict | None:
 def _tvmaze(title: str) -> dict | None:
     try:
         d = _get(f"{TVMAZE}/search/shows?q={urllib.parse.quote(title)}")
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        if _unreachable(exc):
+            raise ProviderUnreachable(f"tvmaze: {exc}") from exc
         return None
     if not d:
         return None
@@ -165,7 +195,9 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
 
     try:
         d = _get(f"{TMDB}/{path}?{urllib.parse.urlencode(params)}")
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        if _unreachable(exc):
+            raise ProviderUnreachable(f"tmdb: {exc}") from exc
         return None
 
     results = d.get("results") or []
@@ -223,9 +255,20 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
     on two cards under two providers — the exact split this is meant to close.
     """
     words = title.split()
-    for source in _sources(kind):
+    sources = _sources(kind)
+    down = 0
+    for source in sources:
         for n in range(len(words), 0, -1):
-            data = source(" ".join(words[:n]), year)
+            try:
+                data = source(" ".join(words[:n]), year)
+            except ProviderUnreachable as exc:
+                # One source being down is not this work being unresolvable:
+                # AniList is asked first for anime, and if it is out while
+                # TVmaze is up the card should still get its art. Give up on
+                # this source and try the next.
+                log.debug("source unreachable, trying the next: %s", exc)
+                down += 1
+                break
             if data is None:
                 continue
             if n == len(words) or _names_the_same_thing(data, title):
@@ -235,6 +278,11 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
             # film, and a merged card offering the wrong download is worse than
             # the split it would have fixed — see parse.py.
             break
+
+    if down and down == len(sources):
+        # Nobody answered. Saying "not found" here would be a lie the caller
+        # writes down permanently.
+        raise ProviderUnreachable(f"all {down} sources unreachable for {title!r}")
     return None
 
 
@@ -279,6 +327,8 @@ def enrich_work(db: Session, work: CatalogWork) -> bool:
     from miru.catalog.parse import normalised
     from miru.catalog.resolve import apply, resolve, work_by_provider
 
+    # ProviderUnreachable propagates on purpose: backfill treats it as "come
+    # back later" rather than writing the mark that retires this work.
     data = resolve(db, work.kind, work.display_title, work.year)
     if not data:
         # Marked as attempted so the backfill does not ask about the same
@@ -348,6 +398,14 @@ def backfill(db: Session, limit: int = 40) -> dict:
             db.commit()
             if got:
                 found += 1
+        except ProviderUnreachable as exc:
+            # The network, not this title. Abandon the pass with every
+            # remaining work still unmarked: the scheduler runs again in half
+            # an hour, and by then the wifi is usually back. Continuing would
+            # spend the rest of the batch failing the same way.
+            log.warning("enrichment paused, providers unreachable: %s", exc)
+            db.rollback()
+            break
         except Exception:  # noqa: BLE001 — one bad title must not stop the rest
             log.exception("enrichment failed for %r", title)
             db.rollback()

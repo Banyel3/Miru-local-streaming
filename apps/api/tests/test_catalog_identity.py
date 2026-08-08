@@ -236,7 +236,12 @@ class TestTheProvidersAreNotHammered:
 
         started = time.monotonic()
         for _ in range(3):
-            enrich._tvmaze("Anything")
+            # The throttle is applied before the request, so it still holds
+            # when the request then fails. A dropped connection now surfaces as
+            # ProviderUnreachable rather than a silent miss — see
+            # test_enrich_transport.py for why that distinction matters.
+            with pytest.raises(enrich.ProviderUnreachable):
+                enrich._tvmaze("Anything")
         assert time.monotonic() - started >= 0.1
 
 
