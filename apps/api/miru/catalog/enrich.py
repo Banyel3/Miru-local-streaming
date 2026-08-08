@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -254,6 +255,9 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
     asking TMDB before AniList has been given "Youjo Senki" puts the same show
     on two cards under two providers — the exact split this is meant to close.
     """
+    if not _could_name_a_show(title):
+        return None
+
     words = title.split()
     sources = _sources(kind)
     down = 0
@@ -271,7 +275,13 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
                 break
             if data is None:
                 continue
-            if n == len(words) or _names_the_same_thing(data, title):
+            # Checked whatever the length. The full-length search used to be
+            # accepted unquestioned, on the reasoning that we asked exactly
+            # what the release said — but a badly parsed title is full-length
+            # by definition, and that is precisely where the worst answers came
+            # from. `CHS` was answered with *CHS: Dash for the Cash* and an
+            # episode of Frieren went onto the wall as an American show.
+            if _names_the_same_thing(data, title):
                 return data
             # A shortened search that found something else. "Detective Conan
             # Movie 2 The Fourteenth Target" shortens to a *different* Conan
@@ -286,10 +296,39 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
     return None
 
 
+# One short token names no show. `CHS` is a subtitle language, `v2` is a
+# re-release marker, `01` is an episode. Asking a provider about any of them is
+# a lottery whose prize is a wrong card, and a wrong card offers the wrong
+# download — the one failure this catalogue refuses to trade a split for.
+_UNIDENTIFIABLE = re.compile(r"^\s*(?:[A-Za-z]{1,4}|\d{1,4}|v\d+)\s*$", re.I)
+
+
+def _could_name_a_show(title: str) -> bool:
+    """Whether this is worth asking a provider about at all.
+
+    Short real titles exist — *Akira*, *BLEACH*, *Monster* — so the rule is not
+    about length. It is about a single token so generic that a match would be a
+    coincidence rather than a recognition.
+    """
+    t = (title or "").strip()
+    if len(t) < 2:
+        return False
+    return not _UNIDENTIFIABLE.fullmatch(t)
+
+
 def _names_the_same_thing(data: dict, title: str) -> bool:
-    """Whether a shortened search found what the release actually names."""
+    """Whether the answer is about the show that was asked about.
+
+    An answer carrying no names at all cannot be checked, so it is accepted —
+    rejecting it would throw away every match on the strength of a field being
+    missing. All three fetchers populate `names` from what the provider
+    returned, so in practice this is the unverifiable case, not the normal one.
+    """
+    names = [n for n in data.get("names") or [] if n]
+    if not names:
+        return True
     key = normalised(title)
-    return any(normalised(n) in key for n in data.get("names") or [] if n)
+    return any(normalised(n) in key for n in names)
 
 
 def _merge_into(db: Session, loser: CatalogWork, winner: CatalogWork) -> None:
