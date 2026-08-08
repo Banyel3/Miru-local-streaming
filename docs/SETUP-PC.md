@@ -289,15 +289,23 @@ one API, definitions maintained upstream. It also carries **nyaa.si**, which is
 the source that matters for anime and which YTS (movies only) cannot cover.
 Jackett solves the same problem but is no longer actively developed.
 
+Install it **natively in Ubuntu WSL**, not via Docker. With Docker Desktop on
+Windows, `docker run` from Ubuntu hands the container to Docker Desktop's own
+VM — the same distro that has to be avoided in step 0 — which would put Prowlarr
+in a third execution environment alongside Ubuntu WSL and Windows. Prowlarr
+ships self-contained binaries, so there is no .NET runtime to install and no
+reason to reach for a container here.
+
 ```bash
 # on the PC, inside WSL2 — check the port first, this environment has form
 python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',9696));print('9696 free')"
 
-docker run -d --name prowlarr --restart unless-stopped \
-  -p 9696:9696 \
-  -e PUID=1000 -e PGID=1000 -e TZ=Asia/Manila \
-  -v ~/.config/prowlarr:/config \
-  lscr.io/linuxserver/prowlarr:latest
+cd /tmp
+wget --content-disposition 'https://prowlarr.servarr.com/v1/update/master/updatefile?os=linux&runtime=netcore&arch=x64'
+tar -xzf Prowlarr*.linux*.tar.gz
+sudo mv Prowlarr /opt/ && sudo chown -R $USER:$USER /opt/Prowlarr
+
+/opt/Prowlarr/Prowlarr -nobrowser -data=$HOME/.config/prowlarr
 ```
 
 Open `http://localhost:9696` on the PC and:
