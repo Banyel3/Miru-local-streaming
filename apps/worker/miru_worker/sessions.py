@@ -137,14 +137,28 @@ async def _await_master(session: Session) -> None:
 
 
 def _evict_if_needed() -> None:
+    # A session whose ffmpeg has exited is finished, not merely old. Waiting
+    # session_ttl_hours to reclaim it meant a run of failures filled
+    # max_sessions and the worker refused work that would have succeeded —
+    # measured on the live worker while the nv12 bug was unfixed: three failed
+    # requests, three slots held, and the fourth would have taken the machine
+    # out for half a day. Dead first, then age.
     for sid, s in list(_sessions.items()):
-        if not s.alive and time.time() - s.started_at > settings.session_ttl_hours * 3600:
+        if not s.alive:
+            log.info("reclaiming finished session %s", sid)
+            _drop(sid)
+
+    for sid, s in list(_sessions.items()):
+        if time.time() - s.started_at > settings.session_ttl_hours * 3600:
             _drop(sid)
 
     while len(_sessions) >= settings.max_sessions:
-        oldest = min(_sessions.values(), key=lambda s: s.started_at)
-        log.info("evicting session %s to stay under max_sessions", oldest.sid)
-        _drop(oldest.sid)
+        # Least recently *used*, not oldest started. A live download is watched
+        # for an hour and is by definition the oldest thing running; evicting it
+        # to make room drops the viewer with 404s and no error.
+        stalest = min(_sessions.values(), key=lambda s: getattr(s, "last_used", s.started_at))
+        log.info("evicting session %s to stay under max_sessions", stalest.sid)
+        _drop(stalest.sid)
 
 
 def _drop(sid: str) -> None:
@@ -157,7 +171,15 @@ def _drop(sid: str) -> None:
 
 
 def active() -> list[Session]:
-    return list(_sessions.values())
+    """Sessions that are actually running.
+
+    Filtered rather than returning the whole table, because this is what
+    /health reports and what a human reads to decide whether the worker is
+    busy. Counting finished sessions as active is how a machine with nothing
+    running reported two of a maximum four, which reads as "nearly full" and is
+    not true.
+    """
+    return [s for s in _sessions.values() if s.alive]
 
 
 def shutdown() -> None:
