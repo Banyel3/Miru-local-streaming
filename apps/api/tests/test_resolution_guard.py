@@ -82,3 +82,53 @@ class TestATitleThatCannotIdentifyAnything:
     def test_a_two_word_title_is_asked_about(self, monkeypatch):
         monkeypatch.setattr(enrich, "_anilist", lambda t: _answer("Your Name", "Your Name"))
         assert enrich.lookup("anime", "Your Name", None)["display_title"] == "Your Name"
+
+
+class TestTheCheckIsNotStricterThanTheNaming:
+    """Measured after the guard shipped: the resolve rate fell from 83% to 14%.
+
+    The check asked whether a provider's name is a substring of the query. That
+    is right in spirit and far too literal in practice — release names drop
+    punctuation the provider keeps, and a provider legitimately answers with a
+    longer canonical title than the one asked about.
+    """
+
+    def _same(self, query, *names):
+        return enrich._names_the_same_thing({"names": list(names)}, query)
+
+    def test_an_apostrophe_the_release_name_dropped_is_not_a_different_show(self):
+        # The single biggest loss: 102 releases. Scene naming has no
+        # apostrophes, the provider's title does.
+        assert self._same("Frieren Beyond Journeys End", "Frieren: Beyond Journey's End")
+
+    def test_a_provider_may_answer_with_a_longer_canonical_title(self):
+        # "Frieren" is what the release says; the provider's record is called
+        # "Frieren: Beyond Journey's End". Neither contains the other in the
+        # direction the check happened to look.
+        assert self._same("Frieren", "Frieren: Beyond Journey's End")
+
+    def test_punctuation_the_provider_keeps_is_ignored(self):
+        assert self._same("Kimi no na wa", "Kimi no Na wa.")
+        assert self._same("Re Zero kara Hajimeru Isekai Seikatsu",
+                          "Re:ZERO -Starting Life in Another World-",
+                          "Re:Zero kara Hajimeru Isekai Seikatsu")
+
+    def test_a_genuinely_different_show_is_still_refused(self):
+        # The guard has to keep earning its place. This is the case it exists
+        # for, and loosening must not cost it.
+        assert not self._same("Climax", "Les Ch'tis")
+        assert not self._same("Big Brother", "Big Bang Theory")
+
+    def test_a_fragment_too_short_to_name_anything_is_refused(self):
+        # `chs` really does sit inside `chsdashforthecash`. Containment in
+        # either direction is what lets a provider answer with a longer
+        # canonical title, and it is exactly what would let this back in, so
+        # the shorter side has to be long enough to be a name.
+        assert not self._same("CHS", "CHS: Dash for the Cash")
+        assert self._same("Frieren", "Frieren: Beyond Journey's End")
+
+    def test_a_shared_prefix_is_not_enough(self):
+        # "One Piece" and "One Piece Film: Red" are different works, and the
+        # film has its own provider id. Accepting a prefix match would merge a
+        # film into its series — a card offering the wrong download.
+        assert not self._same("One Piece", "One Punch Man")

@@ -335,19 +335,54 @@ def _could_name_a_show(title: str) -> bool:
     return not _UNIDENTIFIABLE.fullmatch(t)
 
 
+def _loose(text: str) -> str:
+    """A name reduced to what two sources would agree on.
+
+    Scene naming drops the punctuation a provider keeps — `Journey's` is
+    written `Journeys` — and a strict comparison called those different shows.
+    Measured: the resolve rate fell from 83% to 14% on that alone, and the
+    single largest loss was 102 releases of one show.
+    """
+    return re.sub(r"[^a-z0-9]+", "", normalised(text))
+
+
 def _names_the_same_thing(data: dict, title: str) -> bool:
     """Whether the answer is about the show that was asked about.
 
-    An answer carrying no names at all cannot be checked, so it is accepted —
-    rejecting it would throw away every match on the strength of a field being
-    missing. All three fetchers populate `names` from what the provider
-    returned, so in practice this is the unverifiable case, not the normal one.
+    Containment in either direction, on the loose form. Either direction
+    because a provider legitimately answers with a longer canonical title than
+    the one asked about — the release says `Frieren`, the record is called
+    `Frieren: Beyond Journey's End` — and with a shorter one when the release
+    name carries a season or a subtitle the record does not.
+
+    An answer carrying no names at all cannot be checked, so it is accepted:
+    rejecting it would throw away a real match on the strength of a missing
+    field. All three fetchers populate `names` from what the provider returned,
+    so that is the unverifiable case rather than the normal one.
     """
     names = [n for n in data.get("names") or [] if n]
     if not names:
         return True
-    key = normalised(title)
-    return any(normalised(n) in key for n in names)
+    key = _loose(title)
+    if not key:
+        return False
+    return any(_overlap(key, _loose(name)) for name in names)
+
+
+# Below this, one name appearing inside another is coincidence rather than
+# recognition: `chs` sits inside `chsdashforthecash` and names nothing about it,
+# while `frieren` inside `frierenbeyondjourneysend` is the same show. Five
+# characters is where the live catalogue separates the two.
+_MIN_OVERLAP = 5
+
+
+def _overlap(key: str, name: str) -> bool:
+    if not name:
+        return False
+    if key == name:
+        return True
+    shorter, longer = sorted((key, name), key=len)
+    return len(shorter) >= _MIN_OVERLAP and shorter in longer
 
 
 def _merge_into(db: Session, loser: CatalogWork, winner: CatalogWork) -> None:
