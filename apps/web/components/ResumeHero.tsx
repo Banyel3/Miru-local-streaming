@@ -1,6 +1,6 @@
 "use client";
 
-import { MediaFile, STRATEGY, clock } from "@/lib/api";
+import { MediaFile, clock, isPlayable } from "@/lib/api";
 import { isComplete, useProgress } from "@/lib/store";
 import { Play } from "@/components/icons";
 import { ButtonLink } from "@/components/ui";
@@ -9,12 +9,10 @@ import { ButtonLink } from "@/components/ui";
  *  file you're 40 minutes into is a lie the user pays for. */
 export function ResumeHero({ file, size = "lg" }: { file: MediaFile; size?: "md" | "lg" }) {
   const progress = useProgress(file.id);
-  const strategy = STRATEGY[file.playback_strategy];
-
-  if (!strategy.playable) {
+  if (!isPlayable(file)) {
     return (
       <ButtonLink href={`/file/${file.id}`} variant="secondary" size={size}>
-        {strategy.label} required
+        Unavailable — see why
       </ButtonLink>
     );
   }

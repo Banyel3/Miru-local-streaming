@@ -1,11 +1,12 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from miru.core.db import get_db
 from miru.library.models import Job, MediaFile
 from miru.library.scanner import run_scan_job
+from miru.transcode.worker import NEEDS_WORKER, availability, hls_url
 
 router = APIRouter(prefix="/api", tags=["library"])
 
@@ -28,6 +29,24 @@ class MediaFileOut(BaseModel):
     height: int | None
     subtitle_streams: list[dict]
     playback_strategy: str
+
+    # Derived per request from (strategy, worker reachable) — never stored.
+    # A stored value goes stale the moment the PC comes back.
+    availability: str = "available"
+    availability_note: str | None = None
+
+    # Absolute worker URL, handed to the browser so it can fetch HLS directly.
+    # Deliberately NOT a redirect from this API: a cross-origin CORS redirect
+    # taints the Origin header to `null`, which no allowlist on the worker can
+    # ever match, so the manifest fetch fails no matter how CORS is configured.
+    hls_url: str | None = None
+
+    @model_validator(mode="after")
+    def _derive_availability(self):
+        self.availability, self.availability_note = availability(self.playback_strategy)
+        if self.playback_strategy in NEEDS_WORKER and self.availability == "gpu-ready":
+            self.hls_url = hls_url(self.id, self.playback_strategy, self.height)
+        return self
 
 
 class JobOut(BaseModel):

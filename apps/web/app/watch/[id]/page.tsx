@@ -11,8 +11,9 @@ import {
   getFile,
   getLibrary,
   mimeType,
+  isPlayable,
   nextAfter,
-  streamUrl,
+  playbackUrl,
   subtitleTracks,
 } from "@/lib/api";
 
@@ -54,7 +55,7 @@ export default async function WatchPage({
   const strategy = STRATEGY[file.playback_strategy];
   const next = nextAfter(file, all);
 
-  if (!strategy.playable) {
+  if (!isPlayable(file)) {
     return (
       <main className="grid min-h-dvh place-items-center bg-bg-deep p-8">
         <div className="flex max-w-lg flex-col items-start gap-4">
@@ -68,11 +69,11 @@ export default async function WatchPage({
           <h1 className="text-2xl font-extrabold text-balance">{file.title}</h1>
           <p className="flex items-center gap-2 text-sm font-bold text-accent">
             <span className="size-2 rounded-full bg-accent" aria-hidden />
-            {strategy.label} required
+            Not playable right now
           </p>
           <p className="text-sm leading-relaxed text-text-dim">
-            {strategy.note} The file is catalogued and its details are on the info page — it just
-            can&apos;t be handed to the browser as-is yet.
+            {file.availability_note ?? strategy.note} The file is catalogued and its details are on
+            the info page.
           </p>
           <ButtonLink href={`/file/${file.id}`} variant="secondary">
             See file details
@@ -85,7 +86,7 @@ export default async function WatchPage({
   return (
     <Player
       file={file}
-      src={streamUrl(file.id)}
+      src={playbackUrl(file)}
       mime={mimeType(file)}
       tracks={subtitleTracks(file)}
       next={next}

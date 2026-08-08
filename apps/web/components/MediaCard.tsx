@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MediaFile, STRATEGY, displayTitle, resolution, runtime } from "@/lib/api";
+import { MediaFile, displayTitle, isPlayable, resolution, runtime } from "@/lib/api";
 import { percentOf, toggleFavourite, useFavourites, useProgress } from "@/lib/store";
 import { Check, Heart, Play } from "@/components/icons";
 import { ArtTile, MicroChip, ProgressBar } from "@/components/ui";
@@ -12,7 +12,7 @@ export function MediaCard({ file }: { file: MediaFile }) {
   const favourites = useFavourites();
   const isFav = favourites?.includes(file.id) ?? false;
   const watched = progress ? isComplete(progress) : false;
-  const strategy = STRATEGY[file.playback_strategy];
+  const playable = isPlayable(file);
   const { episode, label } = displayTitle(file);
 
   return (
@@ -36,9 +36,12 @@ export function MediaCard({ file }: { file: MediaFile }) {
             </span>
           )}
 
-          {!strategy.playable && (
-            <span className="absolute top-2 right-2 rounded-md border border-border-hover bg-bg/85 px-1.5 py-0.5 font-mono text-[9px] text-text-muted">
-              {file.playback_strategy}
+          {!playable && (
+            <span
+              className="absolute top-2 right-2 rounded-md border border-border-hover bg-bg/85 px-1.5 py-0.5 font-mono text-[9px] text-accent"
+              title={file.availability_note ?? undefined}
+            >
+              PC offline
             </span>
           )}
 

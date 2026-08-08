@@ -1,6 +1,6 @@
 "use client";
 
-import { MediaFile, STRATEGY, clock } from "@/lib/api";
+import { MediaFile, STRATEGY, clock, isPlayable } from "@/lib/api";
 import { clearProgress, isComplete, percentOf, toggleFavourite, useFavourites, useProgress } from "@/lib/store";
 import { Heart, Play } from "@/components/icons";
 import { Button, ButtonLink, ProgressBar } from "@/components/ui";
@@ -10,12 +10,13 @@ export function DetailActions({ file }: { file: MediaFile }) {
   const favourites = useFavourites();
   const isFav = favourites?.includes(file.id) ?? false;
   const strategy = STRATEGY[file.playback_strategy];
+  const playable = isPlayable(file);
   const resumable = progress && !isComplete(progress) ? progress : null;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        {strategy.playable ? (
+        {playable ? (
           <>
             <ButtonLink href={`/watch/${file.id}`} size="lg">
               <Play />
@@ -36,9 +37,11 @@ export function DetailActions({ file }: { file: MediaFile }) {
           <div className="flex flex-col gap-2 rounded-xl border border-border-hover bg-surface px-5 py-4">
             <span className="flex items-center gap-2 text-sm font-bold text-accent">
               <span className="size-[7px] rounded-full bg-accent" aria-hidden />
-              {strategy.label} required
+              Not playable right now
             </span>
-            <p className="max-w-[52ch] text-[13px] leading-relaxed text-text-dim">{strategy.note}</p>
+            <p className="max-w-[52ch] text-[13px] leading-relaxed text-text-dim">
+              {file.availability_note ?? strategy.note}
+            </p>
           </div>
         )}
 

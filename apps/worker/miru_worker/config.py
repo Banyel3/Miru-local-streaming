@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # x264 otherwise — which is what lets this run on a machine with no GPU.
     encoder: str = ""
 
+    # hls.js fetches manifests and segments by XHR, so the worker is a
+    # cross-origin fetch target and needs CORS. A bare <video src> would not,
+    # which is why this only shows up once HLS enters the picture.
+    web_origin: str = "http://localhost:3001"
+
     max_sessions: int = 4
     session_ttl_hours: int = 12
 

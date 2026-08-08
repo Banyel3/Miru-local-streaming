@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     # is a cache and not data: deleting it costs one ffmpeg run per track.
     cache_dir: str = ".cache"
 
+    # Transcode worker on the PC. Empty means no worker: files needing an
+    # encoder are then reported unavailable rather than failing at play time.
+    transcode_worker: str = ""
+
+    # How the *worker* reaches this API to pull sources. Must be an address the
+    # PC can resolve — not localhost, which would point it at itself.
+    public_api_url: str = "http://localhost:8000"
+
     @property
     def cache(self) -> Path:
         return Path(self.cache_dir).resolve()

@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 from miru_worker import sessions
@@ -23,6 +24,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Miru transcode worker", version="0.1.0", lifespan=lifespan)
+
+# Required, not optional. hls.js pulls the manifest and every segment with XHR
+# from the web origin, so without this the player fails with an opaque CORS
+# error and no video — the same failure mode a bare <video src> never has.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.web_origin],
+    allow_methods=["GET", "DELETE"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

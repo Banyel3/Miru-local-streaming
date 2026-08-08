@@ -4,8 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from fastapi.responses import RedirectResponse
+
 from miru.core.db import get_db
 from miru.library.models import MediaFile
+from miru.transcode.worker import NEEDS_WORKER, availability, hls_url
 
 router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
@@ -42,4 +45,34 @@ def stream(file_id: int, db: Session = Depends(get_db)):
         media_type=CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream"),
         filename=path.name,
         content_disposition_type="inline",
+    )
+
+
+@router.get("/{file_id}/index.m3u8")
+def hls(file_id: int, db: Session = Depends(get_db)):
+    """Redirect to the worker's manifest.
+
+    Kept because the spec lists this endpoint and it is useful for non-browser
+    clients, but the web player does NOT use it: it reads `hls_url` off the file
+    payload and fetches the worker directly. A browser following a cross-origin
+    CORS redirect sends `Origin: null` on the second hop, which the worker cannot
+    match against any allowlist, so the manifest fetch fails regardless of CORS
+    configuration. The redirect is fine for curl and for players that do not
+    enforce CORS.
+    """
+    record = db.get(MediaFile, file_id)
+    if not record:
+        raise HTTPException(404, "no such file")
+
+    if record.playback_strategy not in NEEDS_WORKER:
+        raise HTTPException(
+            409, f"{record.playback_strategy} does not need transcoding — use /api/stream/{file_id}"
+        )
+
+    state, note = availability(record.playback_strategy)
+    if state != "gpu-ready":
+        raise HTTPException(503, note or "transcode worker unavailable")
+
+    return RedirectResponse(
+        hls_url(file_id, record.playback_strategy, record.height), status_code=302
     )

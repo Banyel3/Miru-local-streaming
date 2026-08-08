@@ -12,6 +12,11 @@ export type MediaFile = {
   height: number | null;
   subtitle_streams: { index: number; codec: string; language: string | null }[];
   playback_strategy: "direct" | "remux" | "transcode_audio" | "transcode_full";
+  /** Derived per request by the API from (strategy, worker reachable). */
+  availability: "available" | "gpu-ready" | "unavailable";
+  availability_note: string | null;
+  /** Absolute worker URL when this file needs transcoding, else null. */
+  hls_url: string | null;
 };
 
 export type Job = {
@@ -126,12 +131,32 @@ export function subtitleTracks(file: MediaFile): SubtitleTrack[] {
  * because a direct-play .mov is H.264 in an ISO-BMFF container, which is what
  * browsers decode it as anyway.
  */
-export type PlayerMime = "video/mp4" | "video/webm";
+export type PlayerMime = "video/mp4" | "video/webm" | "application/x-mpegurl";
 
 export function mimeType(f: MediaFile): PlayerMime {
+  if (needsWorker(f)) return "application/x-mpegurl";
   const ext = f.path.slice(f.path.lastIndexOf(".") + 1).toLowerCase();
   return ext === "webm" || f.container === "webm" ? "video/webm" : "video/mp4";
 }
+
+/** Rungs where an encoder has to run, so playback goes through the PC. */
+export const needsWorker = (f: MediaFile) =>
+  f.playback_strategy === "transcode_audio" || f.playback_strategy === "transcode_full";
+
+/**
+ * The URL the player should load, whichever rung this file is on.
+ *
+ * For transcoded files this is the worker's own URL, taken straight from the
+ * API payload — NOT a redirect through the API. A browser following a
+ * cross-origin CORS redirect sends `Origin: null` on the second hop, which the
+ * worker cannot match against any allowlist, so the manifest fetch fails no
+ * matter how CORS is configured on either side.
+ */
+export const playbackUrl = (f: MediaFile) =>
+  needsWorker(f) && f.hls_url ? f.hls_url : streamUrl(f.id);
+
+/** Playable now? Files needing the PC are only playable while it is reachable. */
+export const isPlayable = (f: MediaFile) => f.availability !== "unavailable";
 
 /* ---------- derived display helpers ---------- */
 
@@ -229,24 +254,15 @@ export const subtitleSummary = (f: MediaFile) => {
   return `subs: ${codecs.join("/")}${langs.length ? ` (${langs.join("/")})` : ""}`;
 };
 
-export const STRATEGY: Record<
-  MediaFile["playback_strategy"],
-  { label: string; playable: boolean; note: string }
-> = {
-  direct: { label: "Direct Play", playable: true, note: "Served straight from disk." },
-  remux: {
-    label: "Remux",
-    playable: false,
-    note: "The video stream is fine but the container is not. Remuxing lands in M3.",
-  },
+export const STRATEGY: Record<MediaFile["playback_strategy"], { label: string; note: string }> = {
+  direct: { label: "Direct Play", note: "Served straight from disk, no re-encoding." },
+  remux: { label: "Remux", note: "Container rewritten; the video stream is copied untouched." },
   transcode_audio: {
     label: "Transcoding",
-    playable: false,
-    note: "Video copies through; the audio track needs re-encoding. Lands in M3.",
+    note: "Video copies through; only the audio track is re-encoded, on the PC.",
   },
   transcode_full: {
     label: "Transcoding",
-    playable: false,
-    note: "This codec needs a full GPU transcode. Lands in M4.",
+    note: "This codec cannot be decoded by the browser, so the PC re-encodes it.",
   },
 };
