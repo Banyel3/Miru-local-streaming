@@ -80,7 +80,7 @@ export function MediaCard({ file }: { file: MediaFile }) {
         onClick={() => toggleFavourite(file.id)}
         aria-pressed={isFav}
         aria-label={isFav ? `Remove ${file.title} from favourites` : `Add ${file.title} to favourites`}
-        className={`absolute top-4 right-4 grid size-9 place-items-center rounded-full border border-border bg-bg/80 backdrop-blur-sm transition-[color,border-color,opacity] duration-150 hover:border-border-hover ${
+        className={`absolute top-4 right-4 grid size-9 place-items-center rounded-full border border-border bg-bg/80 backdrop-blur-sm transition-[color,border-color,opacity] duration-150 hover:border-border-hover [@media(hover:none)]:size-11 ${
           isFav
             ? "text-accent opacity-100"
             : "text-text-muted opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"

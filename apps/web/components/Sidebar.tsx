@@ -161,34 +161,37 @@ export function AppShell({ files, children }: { files: MediaFile[]; children: Re
   }, [open]);
 
   return (
-    <div className="min-h-dvh p-4 sm:p-8 lg:p-14">
-      <div className="mx-auto flex max-w-[1440px] gap-8 lg:rounded-3xl lg:border lg:border-border lg:p-7">
-        {/* Desktop: persistent panel. */}
-        <aside className="hidden w-[264px] shrink-0 flex-col rounded-[20px] border border-border bg-surface px-[18px] pt-7 pb-[22px] lg:flex">
-          <SidebarBody files={files} />
-        </aside>
+    /* Edge to edge. The shell used to be a 1440px rounded card floating in the
+       middle of the viewport, which wasted the right third of any wide screen
+       and made the rails on the home wall impossible to run off the edge. */
+    <div className="min-h-dvh lg:grid lg:grid-cols-[264px_1fr]">
+      {/* Desktop: a full-height column pinned to the left edge. It scrolls
+          independently, so a long Continue Watching list never pushes the nav
+          out of reach. */}
+      <aside className="sticky top-0 hidden h-dvh flex-col overflow-y-auto border-r border-border bg-bg-deep px-[18px] pt-7 pb-[22px] lg:flex">
+        <SidebarBody files={files} />
+      </aside>
 
-        {/* Mobile: top bar + drawer. Core navigation is never hidden, only
-            relocated — a hamburger that drops features is a downgrade. */}
-        <div className="flex min-w-0 flex-1 flex-col gap-6 lg:gap-9">
-          <div className="flex items-center gap-3 lg:hidden">
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              aria-label="Open navigation"
-              aria-expanded={open}
-              className="grid size-11 place-items-center rounded-xl border border-border bg-surface text-text-muted"
-            >
-              <Menu />
-            </button>
-            <Link href="/" className="flex items-baseline gap-2">
-              <span className="text-xl font-extrabold tracking-[-0.02em]">Miru</span>
-              <span className="font-jp text-xs text-text-muted">見る</span>
-            </Link>
-          </div>
-
-          {children}
+      {/* Mobile: top bar + drawer. Core navigation is never hidden, only
+          relocated — a hamburger that drops features is a downgrade. */}
+      <div className="flex min-w-0 flex-col">
+        <div className="gutter sticky top-0 z-(--z-sticky) flex items-center gap-3 border-b border-border bg-bg/85 py-3 backdrop-blur-md lg:hidden">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={open}
+            className="grid size-11 shrink-0 place-items-center rounded-xl border border-border bg-surface text-text-muted"
+          >
+            <Menu />
+          </button>
+          <Link href="/" className="flex items-baseline gap-2">
+            <span className="text-xl font-extrabold tracking-[-0.02em]">Miru</span>
+            <span className="font-jp text-xs text-text-muted">見る</span>
+          </Link>
         </div>
+
+        <main className="gutter flex min-w-0 flex-1 flex-col py-6 lg:py-9">{children}</main>
       </div>
 
       {open && (
@@ -204,7 +207,7 @@ export function AppShell({ files, children }: { files: MediaFile[]; children: Re
               type="button"
               onClick={() => setOpen(false)}
               aria-label="Close navigation"
-              className="absolute top-6 right-4 grid size-9 place-items-center rounded-lg text-text-muted hover:bg-border hover:text-text"
+              className="absolute top-5 right-3 grid size-11 place-items-center rounded-lg text-text-muted hover:bg-border hover:text-text"
             >
               <Close />
             </button>

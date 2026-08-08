@@ -49,7 +49,7 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <article className="flex flex-col gap-10">
-      <div className="relative isolate -mx-4 overflow-hidden sm:-mx-8 lg:-mx-7 lg:-mt-7 lg:rounded-t-3xl">
+      <div className="bleed relative isolate -mt-6 overflow-hidden lg:-mt-9">
         <div
           className="absolute inset-0 h-[280px] sm:h-[380px]"
           style={{ background: artTint(file.title) }}
@@ -64,7 +64,7 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
           aria-hidden
         />
 
-        <div className="relative flex flex-col gap-6 px-4 pt-6 pb-2 sm:px-8 lg:px-7">
+        <div className="bleed-pad relative flex flex-col gap-6 pt-6 pb-2">
           <Link
             href="/"
             className="inline-flex w-fit items-center gap-3 text-[13px] font-semibold text-text-muted transition-colors hover:text-text"
@@ -135,7 +135,7 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
             <span className="ml-auto text-[12.5px] text-text-muted">{siblings.length} files</span>
           </div>
 
-          <ul className="rail -mx-4 flex gap-4 overflow-x-auto px-4 pb-3 sm:-mx-8 sm:px-8 lg:mx-0 lg:px-0">
+          <ul className="rail bleed bleed-pad flex gap-4 overflow-x-auto pb-3">
             {siblings.map((sib) => (
               <li key={sib.id} className="w-[236px] shrink-0">
                 <Link

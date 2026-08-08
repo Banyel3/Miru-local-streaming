@@ -70,6 +70,48 @@ body {
   }
 }
 
+/* The content gutter, and the one sanctioned way out of it.
+
+   The shell is edge-to-edge, so anything that should touch the screen edge —
+   hero art, a rail that runs off the right — needs to escape the gutter. Every
+   page used to hand-write negative margins mirroring the shell's padding
+   (`-mx-4 sm:-mx-8 lg:-mx-7`), which meant changing the shell silently broke
+   the bleeds three files away. These two classes are defined against each
+   other, so they cannot drift. */
+.gutter {
+  padding-inline: 1rem;
+}
+.bleed {
+  margin-inline: -1rem;
+}
+.bleed-pad {
+  padding-inline: 1rem;
+}
+
+@media (min-width: 640px) {
+  .gutter {
+    padding-inline: 1.5rem;
+  }
+  .bleed {
+    margin-inline: -1.5rem;
+  }
+  .bleed-pad {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .gutter {
+    padding-inline: 2.25rem;
+  }
+  .bleed {
+    margin-inline: -2.25rem;
+  }
+  .bleed-pad {
+    padding-inline: 2.25rem;
+  }
+}
+
 /* Horizontal rails: momentum scrolling with snap, and a scrollbar that is
    present but quiet. Not a custom scrollbar — a narrowed native one. */
 .rail {
