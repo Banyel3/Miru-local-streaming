@@ -186,8 +186,12 @@ export const needsWorker = (f: MediaFile) =>
 export const playbackUrl = (f: MediaFile) =>
   needsWorker(f) && f.hls_url ? f.hls_url : streamUrl(f.id);
 
-/** Playable now? Files needing the PC are only playable while it is reachable. */
-export const isPlayable = (f: MediaFile) => f.availability !== "unavailable";
+/** Playable now? Files needing the PC are only playable while it is reachable,
+ *  and a DRM-encrypted file is never playable by anything. Both must fail here
+ *  rather than at each call site: every screen that offers a Play button reads
+ *  this, and a source no decoder can open mounts as a spinner that never ends. */
+export const isPlayable = (f: MediaFile) =>
+  f.availability !== "unavailable" && f.availability !== "unplayable";
 
 /* ---------- derived display helpers ---------- */
 

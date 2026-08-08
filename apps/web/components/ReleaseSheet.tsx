@@ -224,9 +224,15 @@ export function ReleaseSheet({
   // "8 of 1,172" is the honest line. The other 1,164 have no release behind
   // them, so they are counted here and never rendered as rows.
   const listed = groups.filter((g) => g.kind !== "unsorted").length;
+  // The provider count belongs to whichever entry the title resolved to, and a
+  // later season's releases keep counting from where the previous one stopped —
+  // Bookworm S4 is episodes 15 and 17 against an S1 entry of 14. Printing
+  // "2 of 14" there states a total the rows visibly exceed, so the count is
+  // only shown once it actually covers the highest episode on screen.
+  const highest = Math.max(...groups.map((g) => g.from), 0);
   const total = work.episode_count;
   const episodeCount =
-    total && total > listed
+    total && total > listed && total >= highest
       ? `${listed} of ${total.toLocaleString()} episodes`
       : `${listed} episode${listed === 1 ? "" : "s"}`;
 

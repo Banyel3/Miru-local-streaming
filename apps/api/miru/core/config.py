@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     # encoder are then reported unavailable rather than failing at play time.
     transcode_worker: str = ""
 
+    # Where the BROWSER should reach the worker. Empty falls back to
+    # transcode_worker, which is the direct cross-origin address and works only
+    # without a reverse proxy. Behind nginx this is a same-origin path, which is
+    # what stops the 302 from tainting Origin to `null`.
+    public_worker_url: str = ""
+
     # How the *worker* reaches this API to pull sources. Must be an address the
     # PC can resolve — not localhost, which would point it at itself.
     public_api_url: str = "http://localhost:8000"

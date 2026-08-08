@@ -111,4 +111,7 @@ def hls_url(file_id: int, strategy: str, height: int | None) -> str:
     params = {"src": source, "copy_video": str(strategy == "transcode_audio").lower()}
     if height:
         params["height"] = str(height)
-    return f"{settings.transcode_worker.rstrip('/')}/hls?{urlencode(params)}"
+    # The browser-facing base, which is not necessarily the one this process
+    # uses. Behind nginx they differ, and that difference is the whole point.
+    base = (settings.public_worker_url or settings.transcode_worker).rstrip("/")
+    return f"{base}/hls?{urlencode(params)}"

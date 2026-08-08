@@ -37,7 +37,12 @@ export function DetailActions({ file }: { file: MediaFile }) {
           <div className="flex flex-col gap-2 rounded-xl border border-border-hover bg-surface px-5 py-4">
             <span className="flex items-center gap-2 text-sm font-bold text-accent">
               <span className="size-[7px] rounded-full bg-accent" aria-hidden />
-              Not playable right now
+              {/* "right now" invites the user to wake the PC and try again.
+                  Nothing will ever decode a DRM-encrypted track, so that
+                  wording would send them off to fix an outage that isn't one. */}
+              {file.availability === "unplayable"
+                ? "This file can't be played"
+                : "Not playable right now"}
             </span>
             <p className="max-w-[52ch] text-[13px] leading-relaxed text-text-dim">
               {file.availability_note ?? strategy.note}

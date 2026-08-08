@@ -56,10 +56,9 @@ export default async function WatchPage({
   const strategy = STRATEGY[file.playback_strategy];
   const next = nextAfter(file, all);
 
-  // "unplayable" is a permanent property of the file, not an outage, so it
-  // never reaches the player: a DRM-encrypted track mounted as a source is a
-  // spinner that never resolves. isPlayable() only covers the PC being asleep.
-  if (!isPlayable(file) || file.availability === "unplayable") {
+  // "unplayable" is a permanent property of the file, not an outage, so the
+  // copy below has to tell the two apart even though the guard is one test.
+  if (!isPlayable(file)) {
     return (
       <main className="grid min-h-dvh place-items-center bg-bg-deep p-8">
         <div className="flex max-w-lg flex-col items-start gap-4">

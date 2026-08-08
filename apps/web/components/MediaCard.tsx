@@ -41,7 +41,9 @@ export function MediaCard({ file }: { file: MediaFile }) {
               className="absolute top-2 right-2 rounded-md border border-border-hover bg-bg/85 px-1.5 py-0.5 font-mono text-[9px] text-accent"
               title={file.availability_note ?? undefined}
             >
-              PC offline
+              {/* A DRM-encrypted file is not an outage — labelling it "PC
+                  offline" sends the user to wake a machine that cannot help. */}
+              {file.availability === "unplayable" ? "No decoder" : "PC offline"}
             </span>
           )}
 
