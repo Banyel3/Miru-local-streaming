@@ -18,7 +18,7 @@ file is current. The reversals are recorded in §8.
 │  Postgres         :5432   <───── HLS ───────────  │  movies-downloader :5000     │
 │  media  /mnt/storage                     │        │                              │
 │                                          │  <──── mounts /mnt/storage (NFS)      │
-│  direct · remux · audio                  │        │  transcode_full only         │
+│  direct · remux                          │        │  anything needing an encoder │
 └──────────────────────────────────────────┘        └──────────────────────────────┘
 ```
 
@@ -37,7 +37,7 @@ Measured on the laptop (sustained, at playback rate):
 |---|---|---|
 | `direct` | Laptop | Zero — file serving with HTTP Range |
 | `remux` | Laptop | 0.37 s CPU for a 10-minute film (~0.06% of a core) |
-| `transcode_audio` | Laptop | 10.5 s CPU for a 10-minute film (~1.8% of a core) |
+| `transcode_audio` | **PC, NVENC** | 1.8% of a core if done locally — but it runs an encoder, so it goes to the PC |
 | `transcode_full` | **PC, NVENC** | 114% of a core and 95 °C if done locally — so it isn't |
 
 Remux is not transcoding. It is `-c copy`: the video stream is copied byte for
@@ -148,9 +148,9 @@ value goes stale the moment the PC wakes.
 
 | State | Meaning | Shown when |
 |---|---|---|
-| `available` | Laptop can serve it alone | `direct`, `remux`, `transcode_audio` |
-| `gpu-ready` | Plays normally | `transcode_full`, worker reachable |
-| `unavailable` | *"Needs GPU transcode — the PC is offline"* | `transcode_full`, worker down |
+| `available` | Laptop can serve it alone | `direct`, `remux` |
+| `gpu-ready` | Plays normally | `transcode_audio` / `transcode_full`, worker reachable |
+| `unavailable` | *"Needs the PC to transcode — it's offline"* | `transcode_audio` / `transcode_full`, worker down |
 
 **Health probe rules.** A ~300 ms TCP check against the worker, cached ~10 s in
 the API process. The library page renders from cache and never blocks on the
@@ -218,22 +218,87 @@ curl -m 5 http://miru-pc:8001/health
 
 ## 6. The transcode worker
 
-A small service on the PC. It holds no library state and no database — it takes
-a URL and returns HLS.
+`apps/worker/`, deployed to the PC. A small FastAPI service with **no database,
+no SQLAlchemy, and no domain models** — it takes a URL and returns HLS. That
+boundary is what stops it becoming a second Miru.
+
+### The rule
+
+**If an encoder runs, it runs on the PC.** One rule, not a per-rung table to
+remember:
+
+| Rung | Where | Encoder? |
+|---|---|---|
+| `direct` | Laptop | No — serving bytes |
+| `remux` | Laptop | No — `-c copy`, container rewrite only |
+| `transcode_audio` | **PC** | Yes |
+| `transcode_full` | **PC** | Yes |
+
+`remux` stays on the laptop because no encoder runs and because MKV + H.264 is
+the majority rung in an anime library; moving it would make the PC a dependency
+for most of the collection.
+
+### Contract
 
 ```
-GET /health                            → availability probe
-GET /hls/index.m3u8?src=<url>&h=720    → starts NVENC, returns the manifest
-GET /hls/{session}/seg/{n}.ts          → segments, written to tmpfs, age-evicted
+GET /health                                 → {ok, encoder, active_sessions}
+GET /hls/{sid}/master.m3u8?src=<url>        → lazily starts ffmpeg, returns the master playlist
+GET /hls/{sid}/{variant}/index.m3u8         → per-rendition media playlist
+GET /hls/{sid}/{variant}/seg/{n}.ts         → segments
 ```
 
-```bash
-ffmpeg -i "<src>" -c:v h264_nvenc -preset p4 -b:v 6M \
-       -c:a aac -ac 2 -f hls -hls_time 4 -hls_flags delete_segments ...
-```
+`sid = sha256(src|profile)[:16]`. Deterministic, so the endpoint is idempotent
+and needs no session-creation call — two players asking for the same thing share
+one encode. A per-`sid` lock makes a double request start exactly one ffmpeg.
 
-Segments live in tmpfs so nothing durable is written for a transcode. Sessions
-are evicted by age.
+**Encoder is auto-detected**: `h264_nvenc` when the device is present,
+`libx264` otherwise. That fallback is what allows the whole worker to be built
+and tested on a machine with no NVIDIA hardware before it is deployed.
+
+**`src` is checked against an allowlist prefix.** The worker fetches whatever
+URL it is handed, so without this it is an SSRF hole on the tailnet.
+
+### Adaptive ladder
+
+A master playlist with concurrent renditions, capped by the source — never
+upscale:
+
+| Variant | Bitrate |
+|---|---|
+| 1080p | 6 Mbps |
+| 720p | 3 Mbps |
+| 480p | 1.2 Mbps |
+
+The 5060 encodes these simultaneously without strain, and the player's Quality
+menu populates itself from the master playlist — there is no picker to write.
+Dropping to a lower rung happens automatically when the connection cannot keep
+up, which is the case that matters on mobile data.
+
+**`transcode_audio` produces a single rendition.** Its video stream is copied,
+so there is nothing to make variants from. The menu shows one entry, correctly.
+
+### Playlist type and seeking
+
+`-hls_playlist_type event`: segments are retained and the manifest grows.
+
+| | Behaviour |
+|---|---|
+| Backward seek | Free — the segments already exist |
+| Forward seek inside the encoded region | Free |
+| Forward seek past the encoder | Waits (v1); restart the encode at that offset as a new session (v2) |
+| First-play latency | Time to produce ~2 segments |
+
+Roughly 5 GB for a two-hour film at 6 Mbps. That is why the HLS cache lives on
+**the PC's local disk** — not tmpfs, which cannot hold it, and not the NFS
+share, since writing it back over wifi would be absurd. Evicted by age and on
+worker start.
+
+### How Miru reaches it
+
+`GET /api/stream/{id}/index.m3u8` on the laptop returns a **302 to the worker**,
+so the browser pulls segments straight from the PC over the tailnet rather than
+proxying every byte through the laptop. The client is already on the tailnet —
+that is how it reached Miru at all.
 
 ---
 
