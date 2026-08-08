@@ -166,18 +166,24 @@ sense than a DHCP reservation: it is bound to the machine's identity rather than
 to your router, so it survives lease renewals, router reboots, and either machine
 moving to a different network entirely.
 
-Use the MagicDNS name rather than the raw address:
+Use the tailnet IP:
 
 ```bash
-MIRU_TRANSCODE_WORKER=http://miru-pc:8001
+MIRU_TRANSCODE_WORKER=http://100.67.44.13:8001
 ```
+
+MagicDNS names are **not** used here. Verified on this laptop: `/etc/resolv.conf`
+holds only `1.1.1.1`, so Tailscale is not managing system DNS, and neither
+`ban-pc` nor its full `.ts.net` form resolves for ordinary programs. Enable
+`tailscale set --accept-dns=true` on both machines if you want names, and check
+`getent hosts` before depending on it.
 
 Two machines on the same LAN connect **directly over the LAN** — Tailscale does
 local peer discovery, so there is no internet hop and no relay. Confirm any pair
 with:
 
 ```bash
-tailscale ping miru-pc      # prints "direct" or "via DERP"
+tailscale ping 100.67.44.13   # prints the path it took
 ```
 
 A static LAN IP would give you less (home-only) for more work. Skip it.
@@ -211,7 +217,7 @@ tailnet address** by default. Three ways out, best first:
 Verify from the laptop, whichever route you take:
 
 ```bash
-curl -m 5 http://miru-pc:8001/health
+curl -m 5 http://100.67.44.13:8001/health
 ```
 
 ---

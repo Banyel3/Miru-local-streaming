@@ -62,14 +62,30 @@ ls /mnt/c                         # NOT /mnt/host/c
 `/mnt/host/c` in the path, a `-sh:` prefix on errors, or a `#` prompt as root
 all mean you are still in Docker Desktop's VM.
 
-Confirm the tailnet name the PC answers to — you need it for everything below:
+### Addresses: use the tailnet IPs, not MagicDNS names
 
 ```bash
 # on the laptop
 tailscale status
 ```
 
-Use that name (for example `miru-pc`) wherever this document says `miru-pc`.
+This document uses the addresses from that output:
+
+| | Tailnet IP |
+|---|---|
+| laptop (`ban-1`) | `100.71.150.101` |
+| PC (`ban-pc`) | `100.67.44.13` |
+
+**MagicDNS names are deliberately not used.** On this laptop `/etc/resolv.conf`
+contains only `1.1.1.1`, so Tailscale is not managing system DNS and neither
+`ban-pc` nor `ban-pc.tail88f195.ts.net` resolves for ordinary programs. That
+`tailscale ping ban-pc` succeeds is misleading: Tailscale resolves that name
+internally, while curl, ffmpeg and uvicorn all go through system DNS and fail.
+
+Tailnet IPs are bound to machine identity, so they are exactly as stable as a
+MagicDNS name and have no DNS dependency at all. If you would rather use names,
+enable `sudo tailscale set --accept-dns=true` on both machines first and confirm
+`getent hosts ban-pc` returns an address before relying on it.
 
 ---
 
@@ -85,7 +101,7 @@ python3 -m http.server 8001
 
 ```bash
 # on the laptop
-curl -m 5 http://miru-pc:8001/
+curl -m 5 http://100.67.44.13:8001/
 ```
 
 **Expect** a directory listing. **If it hangs or refuses**, stop here — nothing
@@ -96,6 +112,24 @@ reopen); is Windows Firewall blocking inbound 8001.
 
 Do not continue until this returns something. Stop the throwaway server when it
 does.
+
+### If the listener says `Address already in use`
+
+That error is good news about the thing you were testing: with mirrored
+networking WSL shares the Windows network stack, so a port occupied by a Windows
+process is occupied inside WSL too. Seeing the conflict proves mirroring is
+active.
+
+Find the occupant from PowerShell:
+
+```powershell
+netstat -ano | findstr :8001
+tasklist /FI "PID eq <the-pid-from-above>"
+```
+
+Then either free the port, or pick a different one for the worker and use it
+consistently in `MIRU_TRANSCODE_WORKER` and the test above. Any free high port
+works — there is nothing special about 8001.
 
 ---
 
@@ -139,9 +173,9 @@ arbitrary addresses.
 ```bash
 cat > ~/miru/apps/worker/.env <<'EOF'
 # Only Miru may hand this worker source URLs.
-WORKER_ALLOWED_SOURCE_PREFIXES=http://miru-laptop:8000/
+WORKER_ALLOWED_SOURCE_PREFIXES=http://100.71.150.101:8000/
 # hls.js fetches manifests and segments by XHR, so the browser origin needs CORS.
-WORKER_WEB_ORIGIN=http://miru-laptop:3001
+WORKER_WEB_ORIGIN=http://100.71.150.101:3001
 # Local disk, not tmpfs and not the NFS share: ~5 GB per two-hour film.
 WORKER_CACHE_DIR=/var/tmp/miru-hls
 WORKER_MAX_SESSIONS=4
@@ -157,7 +191,7 @@ cd ~/miru/apps/worker && ../../.venv/bin/uvicorn miru_worker.main:app --host 0.0
 **Check, from the laptop:**
 
 ```bash
-curl -m 5 http://miru-pc:8001/health
+curl -m 5 http://100.67.44.13:8001/health
 ```
 
 **Expect** `"encoder":"h264_nvenc"`. If it says `libx264`, the worker's own NVENC
@@ -170,10 +204,10 @@ worker runs in.
 
 ```bash
 # on the laptop, in .env
-MIRU_TRANSCODE_WORKER=http://miru-pc:8001
+MIRU_TRANSCODE_WORKER=http://100.67.44.13:8001
 # How the WORKER reaches this API. Must not be localhost — that would point the
 # PC at itself.
-MIRU_PUBLIC_API_URL=http://miru-laptop:8000
+MIRU_PUBLIC_API_URL=http://100.71.150.101:8000
 ```
 
 Restart the API, then:
@@ -207,8 +241,8 @@ sudo exportfs -ra
 # on the PC, inside WSL2
 sudo apt install -y nfs-common
 sudo mkdir -p /mnt/storage
-sudo mount -t nfs miru-laptop:/mnt/storage /mnt/storage
-echo "miru-laptop:/mnt/storage /mnt/storage nfs defaults,_netdev 0 0" | sudo tee -a /etc/fstab
+sudo mount -t nfs 100.71.150.101:/mnt/storage /mnt/storage
+echo "100.71.150.101:/mnt/storage /mnt/storage nfs defaults,_netdev 0 0" | sudo tee -a /etc/fstab
 ```
 
 **Check** the mount is writable from the PC and the file appears on the laptop:
@@ -252,7 +286,7 @@ curl -m 10 "http://127.0.0.1:5000/api/v1/health"
 
 ```bash
 # on the laptop; expect connection refused
-curl -m 5 http://miru-pc:5000/api/v1/health
+curl -m 5 http://100.67.44.13:5000/api/v1/health
 ```
 
 If that succeeds, it is listening on all interfaces. Fix the bind before going
@@ -283,7 +317,7 @@ mount the NFS share, then start both services:
 
 ```bash
 #!/usr/bin/env bash
-mountpoint -q /mnt/storage || mount -t nfs miru-laptop:/mnt/storage /mnt/storage
+mountpoint -q /mnt/storage || mount -t nfs 100.71.150.101:/mnt/storage /mnt/storage
 cd /home/<user>/miru/apps/worker && /home/<user>/miru/.venv/bin/uvicorn \
   miru_worker.main:app --host 0.0.0.0 --port 8001 &
 cd /home/<user>/movies-downloader && HOST=127.0.0.1 PORT=5000 npm start &
@@ -300,7 +334,7 @@ until someone wakes it — everything the laptop can serve keeps working.
 | Symptom | Where to look |
 |---|---|
 | `apt`, `sudo` or `python3` "not found" in WSL | You are in Docker Desktop's VM, not Ubuntu. Step 0 |
-| `curl http://miru-pc:8001/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
+| `curl http://100.67.44.13:8001/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
 | Worker reports `"encoder":"libx264"` | Step 2, in the worker's own shell. NVENC probe failed |
 | Player shows a CORS error | `WORKER_WEB_ORIGIN` does not match the browser's origin exactly, scheme and port included |
 | Worker returns 403 | `WORKER_ALLOWED_SOURCE_PREFIXES` does not cover `MIRU_PUBLIC_API_URL` |
