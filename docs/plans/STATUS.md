@@ -69,6 +69,25 @@ merge or a wrongly hidden film is not.
 If this needs revisiting, the option not taken is a per-work blocklist the user
 sets from the card — nothing guessed, nothing to maintain.
 
+## 2026-08-08, later: the pack sweep and the Watch Now regression
+
+Both shipped. See [HANDOFF.md](../HANDOFF.md) for what is still open and why.
+
+- **Pack sweep** (`eb1a542`). Opening a series card searches `<title> batch` and
+  `<title> complete`, once per show per day, in the background. The catalogue
+  could not reach past the indexers' one-day front page, so a card held many
+  encodings of a few recent episodes: ONE PIECE, 206 releases covering 82
+  distinct episodes of 1172. It now carries packs from episode 1 to 915.
+- **Watch Now** (`79bb25e`). The live remux keyed on the completed-prefix
+  length, which changes every second on a growing file — so every request
+  missed, every miss started a gigabyte-scale ffmpeg, and the remux that
+  finished was never served. One ffmpeg per download now, following the file.
+- **The picker** prefers the smallest complete unit, a run from episode 1 ahead
+  of size. Two things this surfaced: `One Piece 2023` (Netflix's live-action
+  show) fuzzy-matched the 1999 anime because anitopy leaves a trailing year in
+  the title; and "complete" alone picked `Episodes 838-875`, a chunk out of the
+  middle, because uploaders tag any multi-episode release a batch.
+
 ## Known open bugs, unrelated to any plan
 
 - `_restate_works` is an N+1 with row locks.
@@ -76,3 +95,7 @@ sets from the card — nothing guessed, nothing to maintain.
   under a length the client was already told.
 - The picker does not prefer a batch or a complete season.
 - qBittorrent's password is still the literal string `YOURPASSWORD`.
+- The library player shows a bare spinner for the minutes a large remux takes —
+  reported as "remux is failing", when it was silent rather than broken.
+- A film watched while downloading is remuxed again when opened from the
+  library, under a different cache key.

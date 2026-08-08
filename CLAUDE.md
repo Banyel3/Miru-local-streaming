@@ -61,6 +61,10 @@ cd apps/web && npx tsc --noEmit                        # must be clean
   then decided every Server Action was cross-origin and aborted it, and every
   card read "Couldn't load the releases for this" while the API answered 200.
   The headers now live in a snippet that each location includes.
+- **A cache key that changes on every request is worse than a stale one.**
+  Keying a remux on the completed-prefix length made every request a miss on a
+  growing file: one ffmpeg per poll, the finished remux never served, 4.8 GB of
+  waste. Ask what the key does when the thing it describes is still moving.
 - **Measure the source before designing against it.** Prowlarr re-encrypts its
   guids every response, ignores `limit`, has no pagination, dual-tags anime as
   movies, and reports seeder counts that are not comparable between indexers.
