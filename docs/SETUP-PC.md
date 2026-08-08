@@ -24,6 +24,44 @@ On the PC:
   networkingMode=mirrored
   ```
 
+### You are in a real Linux distro, not Docker Desktop's
+
+If Docker Desktop is installed it registers its own WSL distributions, and
+typing bare `wsl` can drop you into one. That VM is a stripped-down BusyBox
+image: no `apt`, no `sudo`, no `python3`, and Docker Desktop rewrites it on
+update, so anything installed there disappears.
+
+```powershell
+wsl -l -v
+```
+
+If the only entries are `docker-desktop` / `docker-desktop-data`, there is no
+distro to work in yet:
+
+```powershell
+wsl --install -d Ubuntu
+wsl --set-default Ubuntu
+wsl --shutdown
+```
+
+If Ubuntu is listed but not marked default, just:
+
+```powershell
+wsl --set-default Ubuntu
+```
+
+Confirm before continuing:
+
+```bash
+wsl
+whoami                            # your user, not root
+cat /etc/os-release | head -2     # Ubuntu
+ls /mnt/c                         # NOT /mnt/host/c
+```
+
+`/mnt/host/c` in the path, a `-sh:` prefix on errors, or a `#` prompt as root
+all mean you are still in Docker Desktop's VM.
+
 Confirm the tailnet name the PC answers to — you need it for everything below:
 
 ```bash
@@ -261,6 +299,7 @@ until someone wakes it — everything the laptop can serve keeps working.
 
 | Symptom | Where to look |
 |---|---|
+| `apt`, `sudo` or `python3` "not found" in WSL | You are in Docker Desktop's VM, not Ubuntu. Step 0 |
 | `curl http://miru-pc:8001/health` hangs | Step 1. Mirrored networking, or Tailscale down on the PC |
 | Worker reports `"encoder":"libx264"` | Step 2, in the worker's own shell. NVENC probe failed |
 | Player shows a CORS error | `WORKER_WEB_ORIGIN` does not match the browser's origin exactly, scheme and port included |
