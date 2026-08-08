@@ -18,7 +18,7 @@ from miru.catalog.classify import classify
 from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
 from miru.catalog.parse import normalised, parse, predict_strategy
 from miru.catalog.rank import Candidate, seeder_percentiles
-from miru.catalog.resolve import apply, cached, work_by_provider
+from miru.catalog.resolve import apply, cached, kind_from, work_by_provider
 from miru.core.config import settings
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,13 @@ def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWo
             return work
         title = data.get("display_title") or title
         year = data.get("year") or year
+        # And the kind, because `apply()` below sets it from the provider. Look
+        # up under the indexer's kind and the row found would not be the row the
+        # apply produces, so the rename collides with whatever already holds the
+        # provider's identity — measured as an outright
+        # `duplicate key value violates unique constraint "uq_work_identity"`
+        # while re-grouping the live catalogue.
+        kind = kind_from(data, kind)
 
     key = normalised(title)
     work = db.execute(

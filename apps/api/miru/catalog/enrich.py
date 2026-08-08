@@ -211,7 +211,11 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
     backdrop = r.get("backdrop_path")
     return {
         "provider": "tmdb",
-        "provider_id": str(r.get("id")),
+        # Namespaced, because TMDB numbers films and television separately:
+        # movie 550 and tv 550 are unrelated shows. A provider id is now matched
+        # without the kind beside it, so it has to be unique on its own or the
+        # two would merge into one card offering the wrong download.
+        "provider_id": f"{'movie' if kind == 'movie' else 'tv'}:{r.get('id')}",
         "display_title": r.get("title") or r.get("name") or title,
         "names": [n for n in (r.get("title"), r.get("name"), r.get("original_title")) if n],
         # w500 rather than original: these are 2:3 cards at ~190px, and a 2 MB
@@ -228,16 +232,31 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
 
 
 def _sources(kind: str):
-    """The sources that know this kind, best first.
+    """The sources that might know this title, best first.
 
-    Ordered by which one actually knows the thing, not by preference: AniList
-    knows anime better than TMDB does, and TVmaze needs no key for series.
+    AniList is asked first whatever the indexer called it. It holds anime and
+    nothing else, so an answer from it is a claim about the show rather than
+    about the indexer that happened to carry the release — and the indexers do
+    not agree with each other. Measured on the live catalogue, one show:
+
+        series   The Pirate Bay   88 releases   (carries no anime tag at all)
+        anime    Nyaa.si          43            (5070 TV/Anime)
+
+    Asking TVmaze first for the series half got a correct answer to the wrong
+    question: it IS a television show, so both halves resolved happily and
+    never met. Frieren was two cards in two rails holding 141 releases between
+    them. The cost of asking AniList first is one miss on live-action, which is
+    a cached miss; the gain is that the kind stops being the indexer's opinion.
+
+    After that the category still orders things, because it is a good hint even
+    when it is not a fact.
     """
+    anilist = (lambda t, y: _anilist(t),)
     if kind == "anime":
-        return (lambda t, y: _anilist(t), lambda t, y: _tmdb(t, y, "series"))
+        return anilist + (lambda t, y: _tmdb(t, y, "series"),)
     if kind == "series":
-        return (lambda t, y: _tvmaze(t), lambda t, y: _tmdb(t, y, "series"))
-    return (lambda t, y: _tmdb(t, y, "movie"),)
+        return anilist + (lambda t, y: _tvmaze(t), lambda t, y: _tmdb(t, y, "series"))
+    return anilist + (lambda t, y: _tmdb(t, y, "movie"),)
 
 
 def lookup(kind: str, title: str, year: int | None) -> dict | None:

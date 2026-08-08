@@ -73,7 +73,11 @@ class CatalogWork(Base):
         # What makes one card out of romaji, English and native script. NULLs
         # compare distinct in both Postgres and SQLite, so the unresolved works
         # — which is most of them on day one — are unaffected.
-        UniqueConstraint("kind", "provider", "provider_id", name="uq_work_provider"),
+        # Without `kind`: the kind is derived from the provider now, not an
+        # independent fact, and keeping it here is what let one show hold
+        # anilist/154587 and tvmaze/69956 at once. TMDB ids carry a
+        # `movie:`/`tv:` namespace because TMDB numbers the two separately.
+        UniqueConstraint("provider", "provider_id", name="uq_work_provider"),
         Index("ix_works_kind_seeders", "kind", "best_seeder_pct"),
         Index("ix_works_kind_first_seen", "kind", "first_seen_at"),
         Index("ix_works_kind_latest", "kind", "latest_release_at"),
@@ -240,7 +244,10 @@ class TitleResolution(Base):
     """
 
     __tablename__ = "catalog_title_resolutions"
-    __table_args__ = (UniqueConstraint("kind", "query", name="uq_resolution_query"),)
+    # Keyed on the query alone. Under (kind, query) the identical title was
+    # asked about twice — once as anime, once as series — and could be answered
+    # differently each time, which is how one show ended up with two ids.
+    __table_args__ = (UniqueConstraint("query", name="uq_resolution_query"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String(16))

@@ -32,7 +32,12 @@ class TestChoosingASource:
         monkeypatch.setattr(enrich, "_tmdb", lambda *a: {"provider": "tmdb"})
         assert enrich.lookup("anime", "One Piece", None)["provider"] == "anilist"
 
-    def test_series_goes_to_tvmaze_which_needs_no_key(self, monkeypatch):
+    def test_series_goes_to_tvmaze_once_anilist_has_said_no(self, monkeypatch):
+        # AniList is asked first for every kind now — it holds anime and nothing
+        # else, so an answer from it is a claim about the show rather than about
+        # the indexer that carried the release. TVmaze is where a live-action
+        # series lands, which is after that question has been asked and missed.
+        monkeypatch.setattr(enrich, "_anilist", lambda t: None)
         monkeypatch.setattr(enrich, "_tvmaze", lambda t: {"provider": "tvmaze"})
         monkeypatch.setattr(enrich, "_tmdb", lambda *a: {"provider": "tmdb"})
         assert enrich.lookup("series", "Big Brother", None)["provider"] == "tvmaze"
