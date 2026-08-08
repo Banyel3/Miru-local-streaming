@@ -150,8 +150,8 @@ def wall(
 
     seen: set[int] = set()
     out = []
-    for rail in rails.RAILS:
-        items, cursor = rails.page(db, rail.sort, kind, exclude=seen)
+    for rail in rails.rails_for(kind):
+        items, cursor = rails.page(db, rail.sort, kind, exclude=seen, rail=rail.key)
         seen.update(w.id for w in items)
         out.append(
             {
@@ -225,7 +225,7 @@ def rail_page(
     if rail is None:
         raise HTTPException(404, f"no rail named {key}")
 
-    items, next_cursor = rails.page(db, rail.sort, kind, cursor=cursor)
+    items, next_cursor = rails.page(db, rail.sort, kind, cursor=cursor, rail=rail.key)
     return {"items": [_work_json(w) for w in items], "next_cursor": next_cursor}
 
 

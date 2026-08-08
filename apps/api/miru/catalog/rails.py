@@ -37,6 +37,8 @@ class Rail:
     jp: str
     sort: str
     note: str | None = None
+    # The walls this rail belongs on. None means all of them.
+    only_for: tuple[str, ...] | None = None
 
 
 # Order matters twice over. Rails are mutually exclusive, so the first one gets
@@ -46,7 +48,25 @@ class Rail:
 RAILS = [
     Rail("latest", "Latest releases", "新着", "latest"),
     Rail("trending", "Trending now", "人気", "trending"),
+    # Films last, and only ever populated on the anime wall. The provider
+    # decides what a show is now, so *Your Name* and *One Piece Film: Red*
+    # resolve at AniList and carry kind=anime — correct, and it would leave a
+    # film sitting between two weekly episode cards with nothing to say it is
+    # one. AniList already draws the line: `format` is MOVIE for the film and TV
+    # for the series. That is the fifth pill the wall does not have room for at
+    # 375px, expressed as a row instead.
+    Rail("films", "Films", "劇場版", "trending", only_for=("anime",)),
 ]
+
+
+def rails_for(kind: str | None) -> list[Rail]:
+    """The rails this wall actually has.
+
+    Films is an anime-wall row: a live-action film already has its own kind, so
+    on the Movies wall the row would either duplicate the wall or, filtered the
+    other way, hold everything the wall was already showing.
+    """
+    return [r for r in RAILS if r.only_for is None or (kind in r.only_for)]
 
 
 def _sort_value(work: CatalogWork, sort: str):
@@ -72,10 +92,24 @@ def decode_cursor(cursor: str | None) -> tuple[str, int] | None:
         return None
 
 
-def _base(kind: str | None) -> Select:
+def _base(kind: str | None, rail: str | None = None) -> Select:
     q = select(CatalogWork).where(CatalogWork.release_count > 0)
     if kind and kind != "all":
         q = q.where(CatalogWork.kind == kind)
+
+    # Only the anime wall splits on format: a live-action film already has its
+    # own kind, and filtering the Movies wall by MOVIE would leave it showing a
+    # subset of itself.
+    if kind == "anime":
+        if rail == "films":
+            q = q.where(CatalogWork.format == "MOVIE")
+        elif rail is not None:
+            # NULL is not MOVIE, but SQL will not say so — an unresolved work
+            # has no format at all, and `!= 'MOVIE'` drops every one of them off
+            # the wall.
+            q = q.where(
+                (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE")
+            )
     return q
 
 
@@ -130,6 +164,7 @@ def page(
     cursor: str | None = None,
     exclude: set[int] | None = None,
     limit: int = PAGE,
+    rail: str | None = None,
 ) -> tuple[list[CatalogWork], str | None]:
     """One page of a rail, plus the cursor for the next.
 
@@ -139,7 +174,7 @@ def page(
     per query is worse than a list comprehension over one page.
     """
     exclude = exclude or set()
-    q = _seek(_ordered(_base(kind), sort), sort, decode_cursor(cursor))
+    q = _seek(_ordered(_base(kind, rail), sort), sort, decode_cursor(cursor))
 
     # Over-fetch so exclusions do not produce a short page that looks like the
     # end of the rail.
