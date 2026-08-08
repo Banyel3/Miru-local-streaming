@@ -3,31 +3,91 @@
 Status: draft
 Date: 2026-08-08
 
-Six reported problems. Two of them share a root cause that the codebase already
-had the answer to, which is the interesting part.
+Six reported problems. One of them turned out to have a cause nobody guessed —
+the file was DRM-encrypted — and two of the others share a root cause the
+codebase already had the answer to.
 
 ---
 
-## 1. The headline bug: live playback serves a container no browser can play
+## 0. Correction: the file that would not play is DRM-encrypted
 
-**Reported:** *"the player appears as 1/8 of the screen and never plays, it just
-loops."*
+An earlier reading of this blamed the Matroska container. That was wrong, or at
+least incomplete, and the real cause is worse. Probing the completed file:
+
+```
+Stream #0:0(jpn): Video: none (encv / 0x76636E65), none, 1920x1080
+codec_name      = unknown
+codec_tag_string= encv
+pix_fmt         = unknown
+```
+
+`encv` is the MPEG Common Encryption marker for an **encrypted video track**.
+This particular release — a Crunchyroll WEB-DL — shipped with the video never
+decrypted. Nothing can play it: not the browser, not ffmpeg, not VLC. ffmpeg
+refuses even to remux it:
+
+```
+Could not find codec parameters for stream 0 (Video: none (encv), 1920x1080)
+Could not find tag for codec none in stream #0
+```
+
+So the black player with a running clock was not Miru failing to serve the file.
+It was Miru faithfully serving a file that cannot be decoded by anything.
+
+**But Miru does have a real bug here, and it is the one worth fixing.** It
+cannot tell "encrypted and undecodable" apart from "not probed yet":
+
+```
+probe: container=matroska video=None audio='aac' 1920x1080
+resolve_strategy -> direct
+```
+
+`resolve_strategy` treats a missing video codec as *unprobed* and optimistically
+returns `direct`, on the documented grounds that "a wrong direct costs one
+failed play". For an encrypted file that reasoning does not hold: it is not one
+failed play, it is a black player forever, with no explanation, on every attempt.
+
+**Fix:**
+
+- `probe_file` reads `codec_tag_string`. A tag of `encv`/`enca`, or a video
+  stream whose `codec_name` is `unknown` while a valid `width` and `height` are
+  present, means undecodable — which is distinguishable from unprobed, where
+  there are no dimensions either.
+- A fifth strategy, `unplayable`, joins the ladder. It never reaches the worker,
+  because there is nothing the GPU can do about it.
+- Both the card and the player say so plainly: *"This release is DRM-encrypted
+  and can't be played. Try a different release."* — with a button that reopens
+  the picker, since the fix is a different release rather than anything the user
+  can do to this one.
+- The scan applies it to library files too, so an encrypted file that arrives by
+  any route is labelled rather than silently black.
+
+This is also the strongest argument yet for the release picker: the user has no
+way to know a release is encrypted before downloading it, so the wall should
+learn from it. When a downloaded release probes as `unplayable`, the release row
+is marked, and the picker never recommends it again.
+
+---
+
+## 1. Live playback still serves a container the browser should not be given
+
+Independent of §0, and still real for every other MKV.
 
 **Measured.** The file being served:
 
 ```
 container : matroska,webm
-video     : 1920x1080          (AVC)
 audio     : aac
 subtitle  : ass × 16 languages
 attachment: ttf × 23
 ```
 
 `/api/stream/live/{hash}` serves those bytes with `Content-Type:
-video/x-matroska`. **No browser plays Matroska.** Chrome, Brave and Firefox all
-refuse it, and a `<video>` given a container it cannot demux shows exactly what
-the screenshot shows: `0:00`, a spinner, and a collapse to the element's default
-intrinsic size of 300×150 — the "1/8 of the screen" strip.
+video/x-matroska`. Browser support for Matroska is inconsistent at best — Chrome
+will sometimes read the duration from one and still refuse to decode it, which
+is precisely the `0:00 / 23:50` in the second screenshot — and a `<video>` given
+a container it cannot demux collapses to the element's default intrinsic size of
+300×150, the "1/8 of the screen" strip.
 
 This is not a new discovery. Miru's own ladder has said so since M1:
 
@@ -210,6 +270,7 @@ directly improves, since a cleaner title is a better search term. Beyond that:
 
 | # | fix | why this order |
 |---|---|---|
+| 0 | §0 detect undecodable files | the reported symptom's actual cause; a black player with no explanation is the worst failure in the list |
 | 1 | §1a one shared player | the bare `<video>` is why there are no subtitles and no Miru chrome; every other playback fix depends on there being one place to make it |
 | 2 | §1 live playback through the worker | nothing else matters if playback does not work, and MKV cannot play without it |
 | 3 | §2a title cleaning | wrong cards are the most visible wrongness after playback |
