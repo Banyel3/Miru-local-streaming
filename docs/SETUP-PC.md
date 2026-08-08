@@ -274,65 +274,61 @@ ls -la /mnt/storage/.write-test && rm /mnt/storage/.write-test
 
 ---
 
-## Step 6 — movies-downloader
+## Step 6 — Prowlarr (search)
 
-Run it **upstream and unmodified**. It already streams over HTTP with Range
-support, which is all Miru needs; forking it would mean maintaining a divergent
-copy of someone else's scraper for no gain.
+**Not `movies-downloader`.** That project was tried and dropped: it scrapes HTML,
+and its scrapers have rotted. The Pirate Bay's page no longer emits a `<tbody>`
+element while the scraper selects `#searchResult > tbody > tr` — browsers insert
+`tbody` when parsing tables, cheerio does not, so the selector matches nothing
+and search returns empty with no error at all. 1337x separately 404s on its
+search path. Fixing it means forking and then maintaining three HTML parsers
+against sites that change markup deliberately.
 
-> **Node must be installed inside WSL.** Without it, `npm` resolves to the
-> Windows one through PATH interop, which then fails on UNC paths and writes its
-> logs to `C:\Users\...\npm-cache`. Check with
-> `node -e 'console.log(process.platform)'` — it must print `linux`.
->
-> ```bash
-> curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-> sudo apt install -y nodejs
-> ```
-
-Build **only the API**. The repo's root `package.json` also builds a React
-frontend you will never open — Miru is the UI. Skipping it avoids a vite build
-and 108 packages, and drops the ~47 npm advisories that come with that tree.
+Prowlarr does exactly that job as its reason for existing: 500+ indexers behind
+one API, definitions maintained upstream. It also carries **nyaa.si**, which is
+the source that matters for anime and which YTS (movies only) cannot cover.
+Jackett solves the same problem but is no longer actively developed.
 
 ```bash
-# on the PC, inside WSL2
-git clone https://github.com/Atuldubey98/movies-downloader ~/movies-downloader
-cd ~/movies-downloader/torrent-scrapper-api
-npm install
-npx tsc
+# on the PC, inside WSL2 — check the port first, this environment has form
+python3 -c "import socket;s=socket.socket();s.bind(('0.0.0.0',9696));print('9696 free')"
+
+docker run -d --name prowlarr --restart unless-stopped \
+  -p 9696:9696 \
+  -e PUID=1000 -e PGID=1000 -e TZ=Asia/Manila \
+  -v ~/.config/prowlarr:/config \
+  lscr.io/linuxserver/prowlarr:latest
 ```
 
-It is used for **search only**. It has no download-to-disk feature: its
-`/torrent/video` endpoint pipes bytes into an HTTP response and expects the
-*client* to save them, and `torrentStream()` is called with no options so its
-piece cache goes to `/tmp`. Downloading is aria2's job (step 6b).
+Open `http://localhost:9696` on the PC and:
 
-**It must be reachable from the laptop**, because Miru runs there and calls it.
-The isolation you want is that the untrusted code does not *live* on the
-always-on, publicly-tunnelled machine — not that it is unreachable.
+1. Set authentication (Prowlarr requires it; **Forms** with a password).
+2. **Indexers → Add Indexer** — add `nyaa.si` for anime, plus The Pirate Bay,
+   1337x and YTS for film and TV. Test each one; a red result means that
+   indexer is down or blocked from your network, not that Prowlarr is broken.
+3. **Settings → General → API Key** — copy it. Miru authenticates with it.
 
-The port variable is **`VITE_API_PORT`**, not `PORT` — the source reads
-`Number(process.env.VITE_API_PORT) || 9000`, so `PORT=5000` is silently ignored
-and it comes up on 9000 instead. Run the entry point directly rather than
-through an npm script; npm's script shell is where Windows interop keeps
-intruding.
+**Check from the laptop:**
 
 ```bash
-VITE_API_PORT=5000 node .        # from torrent-scrapper-api/
+curl -s -m 15 -H "X-Api-Key: YOUR_KEY" \
+  "http://100.67.44.13:9696/api/v1/indexer" | head -c 300
+
+# a real search across every configured indexer
+curl -s -m 45 -H "X-Api-Key: YOUR_KEY" \
+  "http://100.67.44.13:9696/api/v1/search?query=sintel&limit=5" | head -c 400
 ```
 
-**Check from the PC, then from the laptop:**
+That second call is the one Miru's acquisition provider will use. It returns
+title, size, seeders, indexer and a magnet or `.torrent` URL per result — which
+is everything aria2 needs to start a download.
+
+### Removing movies-downloader
 
 ```bash
-# on the PC
-curl -m 10 "http://127.0.0.1:5000/api/v1/health"
-# on the laptop — this SHOULD work
-curl -m 5 http://100.67.44.13:5000/api/v1/health
+# stop the node process, then
+rm -rf ~/movies-downloader
 ```
-
-What must **not** be true is public exposure: no cloudflared tunnel, no router
-port-forward, nothing published beyond the tailnet. It ships with no
-authentication of any kind, so anything that can reach it can drive it.
 
 ---
 

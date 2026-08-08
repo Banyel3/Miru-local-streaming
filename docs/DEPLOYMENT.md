@@ -15,7 +15,8 @@ file is current. The reversals are recorded in §8.
 │                                          │        │  Windows 11 + WSL2           │
 │  Next.js          :3001                  │        │                              │
 │  FastAPI          :8000   ── HTTP ─────────────>  │  NVENC worker      :8010     │
-│  Postgres         :5432   <───── HLS ───────────  │  movies-downloader :5000     │
+│  Postgres         :5432   <───── HLS ───────────  │  prowlarr          :9696
+│                                          │        │  aria2 rpc         :6800     │
 │  media  /mnt/storage                     │        │                              │
 │                                          │  <──── mounts /mnt/storage (NFS)      │
 │  direct · remux                          │        │  anything needing an encoder │
@@ -135,7 +136,7 @@ Starts in seconds and stores nothing durably. The honest constraints:
   `/tmp/torrent-stream/{infoHash}` while streaming. Point that at a tmpfs on the
   PC if it genuinely must stay off disk, and clean it up when the session ends.
 
-Neither path requires forking `movies-downloader`. It already streams over HTTP
+Neither path requires forking Prowlarr + aria2. It already streams over HTTP
 with Range support; it is run upstream and unmodified, bound to `127.0.0.1`.
 
 ---
