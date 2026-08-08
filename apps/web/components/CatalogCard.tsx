@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ActiveDownload, CatalogWork, clock, posterUrl } from "@/lib/api";
+import { ActiveDownload, CatalogWork, clock, posterUrl, uploadedAgo } from "@/lib/api";
 import { ArtTile, MicroChip, ProgressBar } from "@/components/ui";
 import { Check, Play } from "@/components/icons";
 
@@ -20,11 +20,16 @@ export function CatalogCard({
   download,
   pcReachable,
   onOpen,
+  sortedBy,
 }: {
   work: CatalogWork;
   download?: ActiveDownload;
   pcReachable: boolean;
   onOpen: (work: CatalogWork) => void;
+  /** What the surrounding rail is ordered by, so the card can label rows with
+   *  the number they are actually sorted on. Showing the film's year in a row
+   *  headed "Latest releases" made a correct ordering look shuffled. */
+  sortedBy?: "latest" | "trending";
 }) {
   // A poster can 404 after the row said it had one — the cache fetch runs
   // lazily and the provider can be down. Falling back to the tile is the whole
@@ -75,7 +80,11 @@ export function CatalogCard({
     </span>
   ) : (
     <div className="flex flex-wrap items-center gap-1.5">
-      {work.year && <MicroChip>{work.year}</MicroChip>}
+      {sortedBy === "latest" && work.latest_release_at ? (
+        <MicroChip tone="bright">{uploadedAgo(work.latest_release_at)}</MicroChip>
+      ) : (
+        work.year && <MicroChip>{work.year}</MicroChip>
+      )}
       <MicroChip tone={work.release_count > 1 ? "bright" : "muted"}>
         {work.release_count} rel
       </MicroChip>
@@ -86,7 +95,7 @@ export function CatalogCard({
     <>
       <ArtTile
         seed={work.title}
-        label={art ? undefined : work.title}
+        label={undefined}
         className={`aspect-2/3 rounded-[11px] transition-opacity ${
           pcReachable || owned ? "" : "opacity-55"
         }`}
@@ -122,14 +131,15 @@ export function CatalogCard({
         </span>
       </ArtTile>
 
-      {/* The title is set on the tile, not repeated beneath it. Until posters
-          arrive the tile is the only content there is, so it gets real type and
-          three lines rather than being truncated into a caption — and printing
-          it in both places says the same thing twice, which is what ArtTile's
-          own comment warns against. The heading stays for screen readers, and
-          the caption below carries only what the tile does not. */}
+      {/* The name lives here and only here. It used to be set on the tile
+          instead, which read fine until posters arrived: a poster is artwork,
+          not a label — it does not reliably contain a legible title at 150px,
+          and for a film it is often not in English — so every card with art
+          became anonymous. One place, both states. */}
       <div className="flex min-h-[34px] flex-col gap-1.5 px-1 pb-1">
-        <h3 className="sr-only">{work.title}</h3>
+        <h3 className="truncate text-[13.5px] font-bold" title={work.title}>
+          {work.title}
+        </h3>
         {caption}
       </div>
     </>

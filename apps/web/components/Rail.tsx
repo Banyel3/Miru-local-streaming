@@ -93,6 +93,7 @@ export function Rail({
         download={downloads.get(w.id)}
         pcReachable={pcReachable}
         onOpen={onOpen}
+        sortedBy={rail.key === "latest" ? "latest" : "trending"}
       />
     </li>
   ));

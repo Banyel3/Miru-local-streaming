@@ -279,6 +279,8 @@ export const STRATEGY: Record<MediaFile["playback_strategy"], { label: string; n
  */
 
 export type CatalogWork = {
+  /** When the newest release of this was posted. The Latest rail's sort key. */
+  latest_release_at?: string | null;
   id: number;
   kind: "anime" | "movie" | "series";
   title: string;
@@ -400,6 +402,16 @@ export function freshness(iso: string | null, error: string | null) {
 }
 
 /** What a release means for playback, in the user's terms rather than ours. */
+/** How long ago this was posted, for a row that is ordered by exactly that. */
+export function uploadedAgo(iso: string) {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 60) return `${Math.max(1, mins)}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days < 30 ? `${days}d ago` : `${Math.round(days / 30)}mo ago`;
+}
+
 export function playbackNote(r: CatalogRelease) {
   return r.needs_pc
     ? { text: "Needs the PC awake to transcode", tone: "warn" as const }

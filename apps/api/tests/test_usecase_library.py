@@ -187,3 +187,54 @@ class TestScanJobs:
 
     def test_unknown_job_is_a_404(self, client):
         assert client.get("/api/jobs/9999").status_code == 404
+
+
+class TestFinishedDownloadsActuallyLand:
+    """Promotion lives inside scan(), and for a while the only thing that ever
+    called scan() was the Scan button in Settings. So a finished download sat in
+    `incoming` indefinitely while its card said "Adding to your library…"."""
+
+    def test_a_completed_job_asks_for_a_scan(self, client, db_session, monkeypatch):
+        import miru.catalog.router as mod
+        from miru.acquisition.provider import DownloadStatus
+        from miru.catalog.models import CatalogWork
+
+        asked = []
+        monkeypatch.setattr(mod, "_request_scan", lambda: asked.append(1))
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
+        monkeypatch.setattr(
+            mod,
+            "downloader",
+            lambda: type("D", (), {"status": lambda self, j: DownloadStatus(
+                id=j, state="done", progress=1.0)})(),
+        )
+
+        db_session.add(CatalogWork(kind="anime", normalised_title="x", display_title="X",
+                                   genres=[], download_job_id="abc"))
+        db_session.commit()
+
+        client.get("/api/catalog/downloads")
+        assert asked, "a finished download must trigger promotion, not wait 30 minutes"
+
+    def test_an_in_flight_job_does_not(self, client, db_session, monkeypatch):
+        import miru.catalog.router as mod
+        from miru.acquisition.provider import DownloadStatus
+        from miru.catalog.models import CatalogWork
+
+        asked = []
+        monkeypatch.setattr(mod, "_request_scan", lambda: asked.append(1))
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
+        monkeypatch.setattr(
+            mod,
+            "downloader",
+            lambda: type("D", (), {"status": lambda self, j: DownloadStatus(
+                id=j, state="downloading", progress=0.4)})(),
+        )
+        db_session.add(CatalogWork(kind="anime", normalised_title="y", display_title="Y",
+                                   genres=[], download_job_id="def"))
+        db_session.commit()
+
+        client.get("/api/catalog/downloads")
+        assert not asked

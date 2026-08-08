@@ -18,6 +18,22 @@ log = logging.getLogger(__name__)
 _task: asyncio.Task | None = None
 
 
+def scan_now() -> dict:
+    """Promote finished downloads and index them.
+
+    Its own function because a completing download must not wait up to thirty
+    minutes for the periodic pass. Promotion lives inside scan(), and until this
+    existed the ONLY caller was the Scan button in Settings — so a finished
+    download sat in `incoming` indefinitely and its card stayed on
+    "Adding to your library…" forever.
+    """
+    from miru.core.db import SessionLocal
+    from miru.library.scanner import scan
+
+    with SessionLocal() as db:
+        return scan(db)
+
+
 def _run_once() -> dict:
     """One pass, in a thread. Sync all the way down, like the rest of Miru."""
     from miru.acquisition.prowlarr import provider
@@ -25,6 +41,14 @@ def _run_once() -> dict:
     from miru.core.db import SessionLocal
 
     from miru.catalog.enrich import backfill
+
+    # Downloads land on disk between passes, and nothing else was promoting
+    # them. Cheap when nothing changed: the scanner skips unchanged files on
+    # size and mtime, so a settled library costs one stat per file.
+    try:
+        scan_now()
+    except Exception:  # noqa: BLE001
+        log.exception("library scan failed")
 
     with SessionLocal() as db:
         out = refresh(db, provider)

@@ -8,6 +8,7 @@ independently.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -87,6 +88,7 @@ def _work_json(w: CatalogWork) -> dict:
         "score": w.score,
         "release_count": w.release_count,
         "best_seeder_pct": round(w.best_seeder_pct, 3),
+        "latest_release_at": w.latest_release_at.isoformat() if w.latest_release_at else None,
         "library_file_id": w.library_file_id,
         "download_job_id": w.download_job_id,
     }
@@ -300,6 +302,28 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     }
 
 
+_scan_lock = threading.Lock()
+_scan_thread: threading.Thread | None = None
+
+
+def _request_scan() -> None:
+    """Start a promotion scan unless one is already running."""
+    global _scan_thread
+    with _scan_lock:
+        if _scan_thread is not None and _scan_thread.is_alive():
+            return
+        from miru.catalog.scheduler import scan_now
+
+        def run():
+            try:
+                scan_now()
+            except Exception:  # noqa: BLE001 — a failed scan must not 500 a poll
+                log.exception("promotion scan failed")
+
+        _scan_thread = threading.Thread(target=run, daemon=True)
+        _scan_thread.start()
+
+
 @router.get("/downloads")
 def downloads(db: Session = Depends(get_db)):
     """Every in-flight grab, in one request.
@@ -337,6 +361,12 @@ def downloads(db: Session = Depends(get_db)):
                 }
             )
             continue
+
+        # The moment a job reports done is the moment to promote it, rather than
+        # letting it wait for the next periodic pass. Guarded so ten finishing
+        # downloads start one scan, not ten.
+        if s.state == "done" and w.library_file_id is None:
+            _request_scan()
 
         out.append(
             {
