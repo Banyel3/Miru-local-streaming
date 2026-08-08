@@ -5,6 +5,14 @@ second machine. Anything that would reach out is faked at the seam, so a test
 failure means Miru is broken rather than that something was not running.
 """
 
+import os
+
+# Set before miru imports: the engine is built at import time from settings.
+# Pointing it at a port nothing listens on means any code path that reaches a
+# real database fails loudly here, instead of quietly passing on a laptop that
+# has Postgres running and then failing in CI.
+os.environ["MIRU_DATABASE_URL"] = "postgresql+psycopg://nobody@127.0.0.1:1/none"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -16,7 +24,7 @@ from miru.library.models import MediaFile
 
 
 @pytest.fixture
-def db_session():
+def db_session(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -24,6 +32,16 @@ def db_session():
     )
     Base.metadata.create_all(engine)
     Session = sessionmaker(engine, expire_on_commit=False)
+
+    # The module-level engine has to be swapped too, not just the request
+    # dependency: app startup calls create_all() and the scan job opens its own
+    # SessionLocal, neither of which goes through get_db. Without this the suite
+    # only passes on a machine that happens to have Postgres running.
+    import miru.core.db as db_mod
+
+    monkeypatch.setattr(db_mod, "engine", engine)
+    monkeypatch.setattr(db_mod, "SessionLocal", Session)
+
     with Session() as s:
         yield s
 
