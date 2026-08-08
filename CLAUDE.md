@@ -46,9 +46,21 @@ cd apps/web && npx tsc --noEmit                        # must be clean
 
 - **Never `pkill -f`** — its pattern has matched our own shell and killed an
   unrelated app. Kill by exact PID.
-- **Never `npm run build`** — a dev server holds `.next` and it 500s the running
-  site. Typecheck instead.
+- **The web is a production build, not a dev server.** `miru-web` runs
+  `next start`, so **editing web source changes nothing until it is rebuilt** —
+  a fix can be committed, tested and still absent from the running site. That
+  cost a whole debugging session: the player fixes were "shipped" and invisible.
+  To deploy: `systemctl --user stop miru-web && npm run build && systemctl --user
+  start miru-web`. Never build while it is running — the build replaces `.next`
+  underneath the server and the site 500s. `npx tsc --noEmit` for a quick check.
 - **Port 3000 is an unrelated portfolio app.** Miru's web is 3001.
+- **nginx `proxy_set_header` does not inherit the way it looks like it does.**
+  An outer block's headers apply only when the inner block sets *none* of its
+  own. Every `location` in `deploy/nginx/miru.conf` sets at least one, so the
+  server-level `Host $host` applied to nothing and became `$proxy_host`. Next
+  then decided every Server Action was cross-origin and aborted it, and every
+  card read "Couldn't load the releases for this" while the API answered 200.
+  The headers now live in a snippet that each location includes.
 - **Measure the source before designing against it.** Prowlarr re-encrypts its
   guids every response, ignores `limit`, has no pagination, dual-tags anime as
   movies, and reports seeder counts that are not comparable between indexers.
