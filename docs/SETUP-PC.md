@@ -280,10 +280,26 @@ Run it **upstream and unmodified**. It already streams over HTTP with Range
 support, which is all Miru needs; forking it would mean maintaining a divergent
 copy of someone else's scraper for no gain.
 
+> **Node must be installed inside WSL.** Without it, `npm` resolves to the
+> Windows one through PATH interop, which then fails on UNC paths and writes its
+> logs to `C:\Users\...\npm-cache`. Check with
+> `node -e 'console.log(process.platform)'` — it must print `linux`.
+>
+> ```bash
+> curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+> sudo apt install -y nodejs
+> ```
+
+Build **only the API**. The repo's root `package.json` also builds a React
+frontend you will never open — Miru is the UI. Skipping it avoids a vite build
+and 108 packages, and drops the ~47 npm advisories that come with that tree.
+
 ```bash
 # on the PC, inside WSL2
 git clone https://github.com/Atuldubey98/movies-downloader ~/movies-downloader
-cd ~/movies-downloader && npm run build
+cd ~/movies-downloader/torrent-scrapper-api
+npm install
+npx tsc
 ```
 
 It is used for **search only**. It has no download-to-disk feature: its
@@ -295,8 +311,14 @@ piece cache goes to `/tmp`. Downloading is aria2's job (step 6b).
 The isolation you want is that the untrusted code does not *live* on the
 always-on, publicly-tunnelled machine — not that it is unreachable.
 
+The port variable is **`VITE_API_PORT`**, not `PORT` — the source reads
+`Number(process.env.VITE_API_PORT) || 9000`, so `PORT=5000` is silently ignored
+and it comes up on 9000 instead. Run the entry point directly rather than
+through an npm script; npm's script shell is where Windows interop keeps
+intruding.
+
 ```bash
-PORT=5000 npm start
+VITE_API_PORT=5000 node .        # from torrent-scrapper-api/
 ```
 
 **Check from the PC, then from the laptop:**
