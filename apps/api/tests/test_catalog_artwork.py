@@ -96,6 +96,40 @@ class TestBackfill:
         assert w.provider == "none"
         assert enrich.backfill(db_session)["attempted"] == 0
 
+    def test_learning_a_year_merges_two_cards_for_one_film(self, db_session, monkeypatch):
+        # Real case, hit on the live catalogue: one release named the year and
+        # one did not, so "Alapaap" became two works. Enrichment is the moment
+        # they are revealed to be one thing, so it merges rather than failing on
+        # the unique constraint.
+        from miru.catalog.models import CatalogRelease
+
+        dated = self._work(db_session, kind="movie", norm="alapaap", title="Alapaap", year=2022)
+        undated = self._work(db_session, kind="movie", norm="alapaap", title="Alapaap")
+        db_session.add(
+            CatalogRelease(
+                info_hash="a" * 40, indexer="X", guid="g", title="Alapaap 1080p",
+                kind="movie", work_id=undated.id, categories=[],
+            )
+        )
+        db_session.commit()
+
+        monkeypatch.setattr(
+            enrich, "lookup",
+            lambda *a: {"provider": "tmdb", "provider_id": "1", "display_title": "Alapaap",
+                        "poster_url": "https://image.tmdb.org/t/p/w500/x.jpg",
+                        "backdrop_url": None, "overview": None, "score": 3.7,
+                        "genres": [], "year": 2022},
+        )
+        enrich.backfill(db_session)
+
+        remaining = db_session.query(CatalogWork).filter_by(normalised_title="alapaap").all()
+        assert len(remaining) == 1
+        assert remaining[0].id == dated.id
+        # The release follows the card it was folded into, rather than being
+        # orphaned or deleted with it.
+        rel = db_session.query(CatalogRelease).one()
+        assert rel.work_id == dated.id
+
     def test_one_bad_title_does_not_stop_the_rest(self, db_session, monkeypatch):
         self._work(db_session, norm="a", title="A")
         self._work(db_session, norm="b", title="B")

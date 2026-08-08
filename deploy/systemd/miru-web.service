@@ -1,0 +1,16 @@
+[Unit]
+Description=Miru web
+After=network-online.target miru-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/projects/Miru-local-streaming/apps/web
+EnvironmentFile=%h/dev/projects/Miru-local-streaming/.env
+# Port 3001 deliberately: 3000 is the portfolio on this machine.
+ExecStart=/usr/bin/env npm run dev -- --port 3001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

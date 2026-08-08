@@ -95,7 +95,15 @@ start_pc() {
   start_one worker 8010 "$HOME/miru/.venv/bin/uvicorn" miru_worker.main:app \
     --host 0.0.0.0 --port 8010 --app-dir "$HOME/miru/apps/worker"
   start_one prowlarr 9696 /opt/Prowlarr/Prowlarr -nobrowser -data="$HOME/.config/prowlarr"
-  start_one aria2 6800 aria2c --conf-path="$HOME/.aria2/aria2.conf"
+  # qBittorrent is the default downloader: it is the only one of the two that
+  # can be watched while it is still arriving. aria2 stays running only if you
+  # have set MIRU_DOWNLOADER=aria2 — never both at once, because two clients can
+  # end up writing the same file.
+  if [ "${MIRU_DOWNLOADER:-qbittorrent}" = "aria2" ]; then
+    start_one aria2 6800 aria2c --conf-path="$HOME/.aria2/aria2.conf"
+  else
+    start_one qbittorrent 8080 qbittorrent-nox
+  fi
 }
 
 case "${1:-start}" in

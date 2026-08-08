@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from miru.catalog.models import CatalogWork
@@ -169,6 +169,31 @@ def lookup(kind: str, title: str, year: int | None) -> dict | None:
     return _tmdb(title, year, "movie")
 
 
+def _merge_into(db: Session, loser: CatalogWork, winner: CatalogWork) -> None:
+    """Fold one work into another, releases and all.
+
+    Enrichment is exactly the moment two cards are revealed to be one thing: a
+    release with no year in its name became its own work, and the metadata
+    provider has just supplied the year that matches an existing one. Merging
+    them is the wall's whole purpose rather than a workaround for the
+    constraint.
+    """
+    from miru.catalog.models import CatalogRelease
+
+    db.execute(
+        update(CatalogRelease)
+        .where(CatalogRelease.work_id == loser.id)
+        .values(work_id=winner.id)
+    )
+    winner.release_count = (winner.release_count or 0) + (loser.release_count or 0)
+    winner.best_seeder_pct = max(winner.best_seeder_pct or 0.0, loser.best_seeder_pct or 0.0)
+    if loser.library_file_id and not winner.library_file_id:
+        winner.library_file_id = loser.library_file_id
+    if loser.download_job_id and not winner.download_job_id:
+        winner.download_job_id = loser.download_job_id
+    db.delete(loser)
+
+
 def enrich_work(db: Session, work: CatalogWork) -> bool:
     """Fill one work's art. Returns True if anything was found."""
     data = lookup(work.kind, work.display_title, work.year)
@@ -190,6 +215,20 @@ def enrich_work(db: Session, work: CatalogWork) -> bool:
     if data.get("display_title"):
         work.display_title = data["display_title"]
     if data.get("year") and not work.year:
+        # Learning the year can collide with a work that already has it — the
+        # same film, once from a release that named the year and once from one
+        # that did not. That is a merge, not an error.
+        twin = db.execute(
+            select(CatalogWork).where(
+                CatalogWork.kind == work.kind,
+                CatalogWork.normalised_title == work.normalised_title,
+                CatalogWork.year == data["year"],
+                CatalogWork.id != work.id,
+            )
+        ).scalar_one_or_none()
+        if twin is not None:
+            _merge_into(db, work, twin)
+            return True
         work.year = data["year"]
     return True
 
@@ -213,13 +252,21 @@ def backfill(db: Session, limit: int = 40) -> dict:
 
     found = 0
     for work in pending:
+        title = work.display_title
         try:
-            if enrich_work(db, work):
+            got = enrich_work(db, work)
+            # Committed per work rather than per batch: a single constraint
+            # violation used to roll back forty successful lookups with it.
+            db.commit()
+            if got:
                 found += 1
         except Exception:  # noqa: BLE001 — one bad title must not stop the rest
-            log.exception("enrichment failed for %r", work.display_title)
-            work.provider = "none"
-    db.commit()
+            log.exception("enrichment failed for %r", title)
+            db.rollback()
+            fresh = db.get(CatalogWork, work.id)
+            if fresh is not None:
+                fresh.provider = "none"
+                db.commit()
 
     if pending:
         log.info("enrichment: %d/%d works got art", found, len(pending))

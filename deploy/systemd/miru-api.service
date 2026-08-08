@@ -1,0 +1,27 @@
+[Unit]
+Description=Miru API
+# Postgres is a container; without this the API can start before Docker has
+# brought it up and die on its first connection.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/projects/Miru-local-streaming
+# The launcher sources .env; systemd does not, so it is named here. Failing to
+# find it is why the API once ran with no Prowlarr configured and reported the
+# PC unreachable while it was awake.
+EnvironmentFile=%h/dev/projects/Miru-local-streaming/.env
+ExecStart=%h/dev/projects/Miru-local-streaming/.venv/bin/uvicorn miru.main:app \
+  --host 0.0.0.0 --port 8000 \
+  --app-dir %h/dev/projects/Miru-local-streaming/apps/api
+Restart=always
+RestartSec=5
+# Postgres may still be accepting connections a few seconds after Docker
+# reports the container up, so a burst of quick restarts at boot is normal and
+# must not trip the rate limiter into giving up permanently.
+StartLimitBurst=10
+StartLimitIntervalSec=120
+
+[Install]
+WantedBy=default.target
