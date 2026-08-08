@@ -148,6 +148,22 @@ class TestResolutionIsCachedPerTitle:
         assert resolve_mod.resolve(db_session, "anime", "Nobody Knows", None) is None
         assert calls == asked
 
+    def test_a_resolution_already_written_does_not_cost_the_work_its_art(
+        self, db_session, monkeypatch
+    ):
+        # Live: five works lost their enrichment to a duplicate key on the cache
+        # row. That row is a cache — losing the race for it is not a reason to
+        # fail the work it was looked up for.
+        monkeypatch.setattr(enrich, "lookup", fake_lookup([], {"Tampipi": TANYA}))
+        resolve_mod.resolve(db_session, "anime", "Tampipi", None)
+        db_session.commit()
+
+        # The cache read missing a row that the write then collides with is the
+        # shape of the failure, whatever produced the gap.
+        monkeypatch.setattr(resolve_mod, "_row", lambda *a: None)
+        assert resolve_mod.resolve(db_session, "anime", "Tampipi", None) == TANYA
+        db_session.commit()
+
 
 class TestATitleThatOnlyAlmostMatches:
     def test_a_release_tail_the_provider_never_heard_of_is_dropped(self, monkeypatch):

@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from miru.catalog.models import CatalogWork, TitleResolution
@@ -71,16 +72,22 @@ def resolve(db: Session, kind: str, title: str, year: int | None) -> dict | None
     import miru.catalog.enrich as enrich
 
     data = enrich.lookup(kind, title, year)
-    db.add(
-        TitleResolution(
-            kind=kind,
-            query=key,
-            provider=(data or {}).get("provider"),
-            provider_id=(data or {}).get("provider_id"),
-            data=data or {},
-        )
-    )
-    db.flush()
+    try:
+        # In its own savepoint: this row is a cache, and two works whose titles
+        # normalise the same — the same film with and without its year — must
+        # not lose their enrichment to a duplicate key on it.
+        with db.begin_nested():
+            db.add(
+                TitleResolution(
+                    kind=kind,
+                    query=key,
+                    provider=(data or {}).get("provider"),
+                    provider_id=(data or {}).get("provider_id"),
+                    data=data or {},
+                )
+            )
+    except IntegrityError:
+        log.debug("resolution for %r was already written", key)
     return data
 
 

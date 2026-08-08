@@ -17,6 +17,30 @@ export type MediaFile = {
   availability_note: string | null;
   /** Absolute worker URL when this file needs transcoding, else null. */
   hls_url: string | null;
+  /** The show this file belongs to, when the catalogue knows it. Null for a
+   *  file dropped into the folder by hand — guessing would be worse. */
+  series?: SeriesRef | null;
+  /** Every episode of that show, owned and available together. */
+  episodes?: EpisodeRow[];
+};
+
+export type SeriesRef = {
+  work_id: number;
+  title: string;
+  year: number | null;
+  kind: string;
+  overview: string | null;
+  score: number | null;
+  poster_url: string | null;
+};
+
+export type EpisodeRow = {
+  episode: number;
+  episode_end: number | null;
+  releases: number;
+  owned: boolean;
+  file_id: number | null;
+  quality: string | null;
 };
 
 export type Job = {
@@ -379,6 +403,11 @@ export const getWall = (kind = "all") => get<Wall>(`/api/catalog?kind=${kind}`);
 /** Posters are served by our own API, not by the metadata provider: the browser
  *  makes no third-party requests, and a miss 404s so the card falls back to
  *  ArtTile rather than rendering a broken frame. */
+export const episodeLabelFor = (e: EpisodeRow) =>
+  e.episode_end && e.episode_end !== e.episode
+    ? `Episodes ${e.episode}–${e.episode_end}`
+    : `Episode ${e.episode}`;
+
 export const posterUrl = (work: { poster_url: string | null }) =>
   work.poster_url ? `${API_PUBLIC}${work.poster_url}` : null;
 

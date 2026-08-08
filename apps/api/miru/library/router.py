@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from miru.core.db import get_db
 from miru.library.models import Job, MediaFile
 from miru.library.scanner import run_scan_job
+from miru.library import series as series_mod
 from miru.streaming import remux
 from miru.transcode.worker import NEEDS_WORKER, availability, hls_url
 
@@ -80,12 +81,27 @@ def library(q: str | None = None, sort: str = "title", db: Session = Depends(get
     return db.scalars(stmt.order_by(order)).all()
 
 
-@router.get("/files/{file_id}", response_model=MediaFileOut)
+@router.get("/files/{file_id}")
 def file_detail(file_id: int, db: Session = Depends(get_db)):
+    """One file, plus the show it belongs to and that show's episodes.
+
+    The series half is what stops this page losing the poster and the real
+    title the moment you arrive from the wall, and it is what replaces "In this
+    folder" — which grouped by directory and so listed every unrelated file in
+    a flat media folder.
+    """
     record = db.get(MediaFile, file_id)
     if not record:
         raise HTTPException(404, "no such file")
-    return record
+
+    payload = MediaFileOut.model_validate(record, from_attributes=True).model_dump()
+
+    work = series_mod.work_for_file(db, file_id)
+    # A file with no catalogue entry is shown alone. Guessing its series from
+    # the filename is exactly what produced four cards for one show.
+    payload["series"] = series_mod.series_payload(work) if work else None
+    payload["episodes"] = series_mod.episodes_for(db, work) if work else []
+    return payload
 
 
 @router.post("/library/scan", response_model=JobOut, status_code=202)

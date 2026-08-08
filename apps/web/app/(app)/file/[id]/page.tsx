@@ -4,6 +4,7 @@ import { ApiDown } from "@/components/ApiDown";
 import { DetailActions } from "@/components/DetailActions";
 import { WatchState } from "@/components/WatchState";
 import { ArtTile, ButtonLink, FactChip, artTint } from "@/components/ui";
+import { EpisodeList } from "@/components/EpisodeList";
 import { ChevronLeft } from "@/components/icons";
 import {
   ApiError,
@@ -16,7 +17,6 @@ import {
   getLibrary,
   resolution,
   runtime,
-  siblingsOf,
   subtitleSummary,
 } from "@/lib/api";
 
@@ -42,10 +42,10 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
     if (err instanceof ApiError && err.status === 0) return <ApiDown />;
     notFound();
   }
-
-  const siblings = siblingsOf(file, all);
-  const hasSiblings = siblings.length > 1;
+  // The catalogue's title is the name of the thing; the file's is a release
+  // name full of group tags and CRCs. Prefer the former when we have it.
   const { episode, label } = displayTitle(file);
+  const heading = file.series?.title ?? label;
 
   return (
     <article className="flex flex-col gap-10">
@@ -77,9 +77,9 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
 
           <div className="flex flex-col gap-6 sm:flex-row sm:items-end sm:gap-10">
             <ArtTile
-              seed={file.title}
+              seed={file.series?.title ?? file.title}
               episode={episode}
-              label={label}
+              label={heading}
               className="hidden aspect-2/3 w-[180px] shrink-0 rounded-[20px] border border-border sm:flex lg:w-[240px]"
             />
 
@@ -127,50 +127,13 @@ export default async function FileDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      {hasSiblings && (
-        <section className="flex flex-col gap-4">
-          <div className="flex items-baseline gap-2.5">
-            <h2 className="text-xl font-extrabold tracking-[-0.01em]">In this folder</h2>
-            <span className="font-jp text-xs text-text-muted">エピソード</span>
-            <span className="ml-auto text-[12.5px] text-text-muted">{siblings.length} files</span>
-          </div>
-
-          <ul className="rail bleed bleed-pad flex gap-4 overflow-x-auto pb-3">
-            {siblings.map((sib) => (
-              <li key={sib.id} className="w-[236px] shrink-0">
-                <Link
-                  href={`/file/${sib.id}`}
-                  aria-current={sib.id === file.id ? "page" : undefined}
-                  className={`flex h-full flex-col gap-2.5 rounded-[15px] border bg-surface p-2.5 transition-colors duration-150 ${
-                    sib.id === file.id
-                      ? "border-primary"
-                      : "border-border hover:border-border-hover"
-                  }`}
-                >
-                  <ArtTile
-                    seed={sib.title}
-                    episode={displayTitle(sib).episode}
-                    label={displayTitle(sib).label}
-                    compact
-                    className="aspect-video rounded-[10px]"
-                  />
-                  <div className="flex flex-col gap-1.5 px-1 pb-1">
-                    <div className="flex items-center gap-2">
-                      <WatchState id={sib.id} />
-                      <h3 className="truncate text-[13px] font-bold" title={sib.title}>
-                        {displayTitle(sib).label}
-                      </h3>
-                    </div>
-                    <p className="text-[11px] text-text-muted">
-                      {[runtime(sib.duration_ms), resolution(sib)].filter(Boolean).join(" · ") ||
-                        "Not probed"}
-                    </p>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {/* Episodes of this show, owned and available together. This replaces
+          "In this folder", which grouped by directory — and since every
+          download lands flat in one media folder, "the folder" was the whole
+          library: four unrelated shows, a film and a test clip presented as if
+          they belonged together. */}
+      {file.series && file.episodes && file.episodes.length > 0 && (
+        <EpisodeList series={file.series} episodes={file.episodes} currentFileId={file.id} />
       )}
 
       <section className="flex flex-col gap-3 pb-4">
