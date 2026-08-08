@@ -155,6 +155,8 @@ def apply(work: CatalogWork, data: dict) -> None:
     # told from the weekly shows by `format`, which is why the wall needs no
     # fifth pill — see docs/plans/2026-08-08-series-identity.md §7.
     work.kind = kind_from(data, work.kind)
+    if data.get("adult") is not None:
+        work.adult = bool(data["adult"])
     if data.get("display_title"):
         work.display_title = data["display_title"]
         work.normalised_title = normalised(data["display_title"])

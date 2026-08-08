@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     BigInteger,
     DateTime,
@@ -98,6 +99,10 @@ class CatalogWork(Base):
     poster_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     backdrop_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     genres: Mapped[list] = mapped_column(JSONType, default=list)
+    # The provider's own adult flag — AniList `isAdult`, TMDB `adult`. Not
+    # derived from the category, which cannot tell: Nyaa files adult anime as
+    # TV/Anime, correctly, so classification lets it straight through.
+    adult: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # AniList's own word: TV | MOVIE | OVA | ONA | SPECIAL. This is what tells a
     # film from a weekly show inside the anime rail — *One Piece Film: Red* is

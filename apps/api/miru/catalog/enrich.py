@@ -110,6 +110,7 @@ def _anilist(title: str) -> dict | None:
     query ($s: String) {
       Media(search: $s, type: ANIME) {
         id
+        isAdult
         format
         episodes
         title { romaji english native }
@@ -140,6 +141,12 @@ def _anilist(title: str) -> dict | None:
         # one of these is really in the release title, and the release names
         # romaji where AniList shows English.
         "names": [n for n in m["title"].values() if n],
+        # The provider's own word for it. Nyaa files adult anime under
+        # TV/Anime like everything else, so the category cannot see it and the
+        # wall was showing it — the category is not even wrong, it really is
+        # anime. Missing means unknown, and unknown is not adult: assuming
+        # otherwise would empty the wall of everything not yet answered about.
+        "adult": bool(m.get("isAdult")),
         "poster_url": (m.get("coverImage") or {}).get("extraLarge"),
         "backdrop_url": m.get("bannerImage"),
         "overview": (m.get("description") or "").replace("<br>", " ").strip() or None,
@@ -216,6 +223,7 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
         # without the kind beside it, so it has to be unique on its own or the
         # two would merge into one card offering the wrong download.
         "provider_id": f"{'movie' if kind == 'movie' else 'tv'}:{r.get('id')}",
+        "adult": bool(r.get("adult")),
         "display_title": r.get("title") or r.get("name") or title,
         "names": [n for n in (r.get("title"), r.get("name"), r.get("original_title")) if n],
         # w500 rather than original: these are 2:3 cards at ~190px, and a 2 MB

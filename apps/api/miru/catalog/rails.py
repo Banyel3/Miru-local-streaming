@@ -93,7 +93,13 @@ def decode_cursor(cursor: str | None) -> tuple[str, int] | None:
 
 
 def _base(kind: str | None, rail: str | None = None) -> Select:
-    q = select(CatalogWork).where(CatalogWork.release_count > 0)
+    # Adult titles never reach a rail. The provider says so — AniList
+    # `isAdult`, TMDB `adult` — because the category cannot: Nyaa files adult
+    # anime under TV/Anime, so classification passes it through and it landed
+    # on the home page.
+    q = select(CatalogWork).where(
+        CatalogWork.release_count > 0, CatalogWork.adult.is_(False)
+    )
     if kind and kind != "all":
         q = q.where(CatalogWork.kind == kind)
 
