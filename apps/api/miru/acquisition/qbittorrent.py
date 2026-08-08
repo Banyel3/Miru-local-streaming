@@ -246,9 +246,12 @@ class QBittorrentProvider:
 
         qBittorrent reports piece state per torrent (0 = not downloaded,
         1 = requested, 2 = downloaded), so the contiguous prefix is the count of
-        leading 2s times the piece length. Pieces are torrent-wide rather than
-        per-file, so for a multi-file torrent this is deliberately conservative:
-        it measures from the start of the torrent, not the start of the video.
+        leading 2s times the piece length. That count is measured from the start
+        of the TORRENT, and in a multi-file torrent the video does not start
+        there — every byte of every file ahead of it sits in front. Its own
+        offset has to come off the top, or the ceiling lets the player read past
+        what exists and it gets zeros, which decode as corruption rather than as
+        an error anyone can see.
         """
         h = job_id.lower()
         rows = _json("/torrents/info", {"hashes": h})
@@ -273,20 +276,30 @@ class QBittorrentProvider:
             ready += 1
 
         prefix_bytes = ready * piece_len
-        single = len(files) == 1
+
+        # Files are laid end to end in the torrent's byte stream in index
+        # order, so the video's offset is the sum of everything before it.
+        size = int(biggest.get("size") or 0)
+        offset = sum(
+            int(f.get("size") or 0)
+            for f in files
+            if int(f.get("index", 0)) < int(biggest.get("index", 0))
+        )
+        # Clamped at both ends: below, because a prefix that has not yet reached
+        # the video means nothing of it is readable, not a negative amount;
+        # above, because the trailing files are downloading too and
+        # Content-Length is built from this number.
+        readable = max(0, min(prefix_bytes - offset, size))
 
         return {
             "info_hash": h,
             "name": t.get("name"),
             "file": biggest.get("name"),
-            "size_bytes": int(biggest.get("size") or 0),
+            "size_bytes": size,
             "save_path": t.get("save_path") or t.get("content_path") or "",
             "content_path": t.get("content_path") or "",
             "progress": float(t.get("progress") or 0.0),
-            # Conservative on purpose: for a multi-file torrent the prefix is
-            # measured from the start of the torrent rather than the start of
-            # the video, so it under-reports rather than over-promising.
-            "playable_bytes": prefix_bytes if single else min(prefix_bytes, int(biggest.get("size") or 0)),
+            "playable_bytes": readable,
             "sequential": bool(t.get("seq_dl")),
             "complete": float(t.get("progress") or 0.0) >= 1.0,
         }

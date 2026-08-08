@@ -203,3 +203,73 @@ class TestConfiguration:
         # aria2 1.37 has no sequential download for BitTorrent at all, so a
         # partial file is never watchable. The UI must not promise otherwise.
         assert supports_streaming() is False
+
+
+class TestTheReadablePrefixOfAMultiFileTorrent:
+    """Pieces are torrent-wide; a file is not.
+
+    The prefix is a count of completed pieces from piece zero, which is the
+    start of the *torrent*. In a multi-file torrent the video does not start
+    there — every byte of every earlier file sits in front of it. Reporting the
+    torrent prefix as the video's readable prefix over-promises by exactly that
+    offset, and the player reads a hole: zeros, which decode as corruption
+    rather than as an error anyone can see.
+    """
+
+    def _files(self, *sizes):
+        return [
+            {"index": i, "name": f"f{i}.bin", "size": s, "progress": 0}
+            for i, s in enumerate(sizes)
+        ]
+
+    def _wire(self, calls, files, ready_pieces, piece_len, total=None):
+        _, replies = calls
+        replies["/torrents/info"] = [
+            {
+                "name": "Pack",
+                "progress": 0.5,
+                "save_path": "/incoming",
+                "content_path": "/incoming/Pack",
+                "seq_dl": True,
+            }
+        ]
+        replies["/torrents/files"] = files
+        replies["/torrents/pieceStates"] = [2] * ready_pieces + [0] * 40
+        replies["/torrents/properties"] = {"piece_size": piece_len}
+
+    def test_bytes_belonging_to_earlier_files_are_not_counted_as_the_videos(
+        self, qb, calls
+    ):
+        # 30 MB of extras sit in front of a 100 MB video. 50 MB of pieces have
+        # landed, so 20 MB of the video is actually readable.
+        mb = 1024 * 1024
+        self._wire(calls, self._files(30 * mb, 100 * mb), ready_pieces=50, piece_len=mb)
+        assert qb.playable_prefix("abc")["playable_bytes"] == 20 * mb
+
+    def test_nothing_is_readable_until_the_video_itself_starts(self, qb, calls):
+        # The pieces that have landed are entirely inside the earlier file. The
+        # honest answer is zero, not "10 MB" — the player would read a hole.
+        mb = 1024 * 1024
+        self._wire(calls, self._files(30 * mb, 100 * mb), ready_pieces=10, piece_len=mb)
+        assert qb.playable_prefix("abc")["playable_bytes"] == 0
+
+    def test_a_single_file_torrent_is_unchanged(self, qb, calls):
+        mb = 1024 * 1024
+        self._wire(calls, self._files(100 * mb), ready_pieces=40, piece_len=mb)
+        assert qb.playable_prefix("abc")["playable_bytes"] == 40 * mb
+
+    def test_the_prefix_never_exceeds_the_file(self, qb, calls):
+        # Trailing files are downloaded too, so the piece count runs past the
+        # end of the video. Content-Length is built from this.
+        mb = 1024 * 1024
+        self._wire(
+            calls, self._files(10 * mb, 50 * mb, 10 * mb), ready_pieces=70, piece_len=mb
+        )
+        assert qb.playable_prefix("abc")["playable_bytes"] == 50 * mb
+
+    def test_the_biggest_file_is_still_the_one_chosen(self, qb, calls):
+        mb = 1024 * 1024
+        self._wire(calls, self._files(2 * mb, 500 * mb), ready_pieces=200, piece_len=mb)
+        p = qb.playable_prefix("abc")
+        assert p["size_bytes"] == 500 * mb
+        assert p["file"] == "f1.bin"
