@@ -70,15 +70,13 @@ async def refresh_now() -> dict:
 async def _loop(interval: float) -> None:
     while True:
         try:
-            # Skip entirely when the PC is unreachable. Prowlarr lives there, so
-            # every request would fail, and a log full of connection errors is
-            # exactly how a real failure gets missed.
-            from miru.catalog.router import pc_reachable
-
-            if pc_reachable():
-                await refresh_now()
-            else:
-                log.debug("catalog refresh skipped: PC unreachable")
+            # Runs unconditionally. It used to skip whenever the PC was
+            # unreachable, because Prowlarr lived there — and that was the
+            # coverage hole: each indexer's front page turns over in about ten
+            # hours and cannot be paged, so anything uploaded while the PC slept
+            # was never seen and never could be. Prowlarr is on the laptop now,
+            # and only DOWNLOADS depend on the PC.
+            await refresh_now()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad pass must not kill the loop

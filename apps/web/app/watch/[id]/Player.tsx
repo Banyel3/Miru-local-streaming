@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import {
   MediaPlayer,
   MediaPlayerInstance,
@@ -15,11 +15,11 @@ import { DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/l
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
 
-import { MediaFile, PlayerMime, STRATEGY, SubtitleTrack, displayTitle } from "@/lib/api";
+import { MediaFile, PlayerMime, STRATEGY, SubtitleTrack } from "@/lib/api";
 import { AssOverlay } from "@/components/AssOverlay";
 import { getProgress, setProgress } from "@/lib/store";
 import { ChevronLeft, Play } from "@/components/icons";
-import { ArtTile } from "@/components/ui";
+import { ArtTile, artTint } from "@/components/ui";
 
 /** How close to the end the next-episode card appears, and how long it counts
  *  down before advancing on its own. */
@@ -28,20 +28,24 @@ const COUNTDOWN_S = 10;
 /** Progress is written at most this often; a timeupdate fires ~4x a second. */
 const SAVE_EVERY_MS = 4000;
 
-function StrategyChip({ file }: { file: MediaFile }) {
-  const direct = file.playback_strategy === "direct";
+/** The next thing to play, flattened. A live download has no MediaFile row, so
+ *  the player is told where to go rather than handed one. */
+export type NextUp = { href: string; label: string; seed: string };
+
+function StrategyChip({ strategy }: { strategy: MediaFile["playback_strategy"] }) {
+  const direct = strategy === "direct";
   return (
     <div
       className={`flex items-center gap-2 rounded-full border bg-surface/60 px-3.5 py-1.5 font-mono text-[11.5px] font-semibold backdrop-blur-md ${
         direct ? "border-border text-highlight" : "border-border-hover text-accent"
       }`}
-      title={STRATEGY[file.playback_strategy].note}
+      title={STRATEGY[strategy].note}
     >
       <span
         className={`size-[7px] rounded-full ${direct ? "bg-highlight" : "bg-accent"}`}
         aria-hidden
       />
-      {STRATEGY[file.playback_strategy].label}
+      {STRATEGY[strategy].label}
     </div>
   );
 }
@@ -52,7 +56,7 @@ function NextCard({
   onPlay,
   onDismiss,
 }: {
-  next: MediaFile;
+  next: NextUp;
   seconds: number;
   onPlay: () => void;
   onDismiss: () => void;
@@ -67,15 +71,15 @@ function NextCard({
       className="pointer-events-auto flex w-[min(360px,calc(100vw-2rem))] items-center gap-3.5 rounded-2xl border border-border bg-surface/95 p-3.5 backdrop-blur-xl motion-safe:animate-[miru-rise_.3s_var(--ease-out-quart)]"
     >
       <ArtTile
-        seed={next.title}
+        seed={next.seed}
         className="hidden h-14 w-24 shrink-0 rounded-[9px] border border-border sm:flex"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="text-[10px] font-extrabold tracking-[0.14em] text-accent">
           NEXT <span className="font-jp text-[11px] tracking-normal">つづく</span>
         </span>
-        <span className="truncate text-[13px] font-bold" title={next.title}>
-          {displayTitle(next).label}
+        <span className="truncate text-[13px] font-bold" title={next.label}>
+          {next.label}
         </span>
         <div className="mt-1.5 flex items-center gap-2">
           <button
@@ -129,20 +133,46 @@ function NextCard({
   );
 }
 
+/**
+ * The one video player.
+ *
+ * Props are deliberately not library-file shaped. A file being downloaded right
+ * now has no MediaFile row — no id, no strategy, no siblings — and the screen
+ * that plays it still needs subtitles, a real control bar and a real frame.
+ * Both routes map their own object into this surface instead.
+ */
 export function Player({
-  file,
   src,
   mime,
-  tracks,
-  next,
-  restart,
+  title,
+  subtitle,
+  backHref,
+  progressKey = null,
+  tracks = [],
+  strategy,
+  next = null,
+  restart = false,
+  embedded = false,
+  children,
 }: {
-  file: MediaFile;
-  src: string;
+  /** null mounts no media element at all: nothing has arrived yet, or nothing
+   *  here can be decoded. The frame is still drawn, at its final size. */
+  src: string | null;
   mime: PlayerMime;
-  tracks: SubtitleTrack[];
-  next: MediaFile | null;
-  restart: boolean;
+  title: string;
+  subtitle?: string | null;
+  /** Omitted means no top chrome — the embedding page owns the title row. */
+  backHref?: string;
+  /** Where resume is stored. Live downloads have nowhere to store it: null. */
+  progressKey?: number | null;
+  tracks?: SubtitleTrack[];
+  strategy?: MediaFile["playback_strategy"];
+  next?: NextUp | null;
+  restart?: boolean;
+  /** Sits in a page at aspect-video instead of owning the viewport. */
+  embedded?: boolean;
+  /** Drawn over the frame — the live screen's buffering state. */
+  children?: ReactNode;
 }) {
   const router = useRouter();
   const player = useRef<MediaPlayerInstance>(null);
@@ -160,7 +190,7 @@ export function Player({
   );
 
   const goNext = useCallback(() => {
-    if (next) router.push(`/watch/${next.id}`);
+    if (next) router.push(next.href);
   }, [next, router]);
 
   // JASSUB draws onto the real <video>, so it needs the element the provider
@@ -173,12 +203,12 @@ export function Player({
   // media is seekable, which is the earliest point a seek will stick.
   const onCanPlay = useCallback(() => {
     captureVideo();
-    if (restart) return;
-    const saved = getProgress(file.id);
+    if (restart || progressKey === null) return;
+    const saved = getProgress(progressKey);
     if (saved && saved.positionS > 0 && player.current) {
       player.current.currentTime = saved.positionS;
     }
-  }, [captureVideo, file.id, restart]);
+  }, [captureVideo, progressKey, restart]);
 
   const onTimeUpdate = useCallback(
     ({ currentTime }: MediaTimeUpdateEventDetail) => {
@@ -186,9 +216,9 @@ export function Player({
       if (!duration) return;
 
       const now = Date.now();
-      if (now - lastSave.current > SAVE_EVERY_MS) {
+      if (progressKey !== null && now - lastSave.current > SAVE_EVERY_MS) {
         lastSave.current = now;
-        setProgress(file.id, currentTime, duration);
+        setProgress(progressKey, currentTime, duration);
       }
 
       const remaining = duration - currentTime;
@@ -196,21 +226,22 @@ export function Player({
         setCountdown((c) => (c === null ? Math.min(COUNTDOWN_S, Math.ceil(remaining)) : c));
       }
     },
-    [dismissed, file.id, next],
+    [dismissed, next, progressKey],
   );
 
   // Flush the final position on unmount so leaving mid-episode still resumes.
   useEffect(() => {
+    if (progressKey === null) return;
     const flush = () => {
       const p = player.current;
-      if (p && p.state.duration) setProgress(file.id, p.state.currentTime, p.state.duration);
+      if (p && p.state.duration) setProgress(progressKey, p.state.currentTime, p.state.duration);
     };
     window.addEventListener("pagehide", flush);
     return () => {
       flush();
       window.removeEventListener("pagehide", flush);
     };
-  }, [file.id]);
+  }, [progressKey]);
 
   // Countdown ticks independently of playback so a paused tail still advances.
   useEffect(() => {
@@ -223,53 +254,63 @@ export function Player({
     return () => clearTimeout(t);
   }, [countdown, goNext]);
 
+  const Frame: ElementType = embedded ? "div" : "main";
+
   return (
-    <main
-      className={`relative h-dvh w-full overflow-hidden bg-bg-deep ${styled ? "[&_.vds-captions]:hidden" : ""}`}
+    <Frame
+      className={`relative w-full overflow-hidden bg-bg-deep ${
+        embedded ? "aspect-video rounded-2xl border border-border" : "h-dvh"
+      } ${styled ? "[&_.vds-captions]:hidden" : ""}`}
     >
-      <MediaPlayer
-        ref={player}
-        className="absolute inset-0 h-full w-full"
-        title={file.title}
-        // Explicit type, always. See mimeType() — an extensionless stream URL
-        // sends Vidstack down a cross-origin header probe that fails silently.
-        src={{ src, type: mime }}
-        // Required, not optional. The stream is cross-origin, and without this
-        // the video is a tainted source: JASSUB cannot construct a VideoFrame
-        // from it and dies before it ever fetches the subtitle file. The API
-        // sends Access-Control-Allow-Origin for the web origin to match.
-        crossOrigin
-        playsInline
-        autoPlay
-        keyShortcuts={{
-          togglePaused: "k Space",
-          seekBackward: "j ArrowLeft",
-          seekForward: "l ArrowRight",
-          toggleFullscreen: "f",
-          toggleMuted: "m",
-          volumeUp: "ArrowUp",
-          volumeDown: "ArrowDown",
-        }}
-        onCanPlay={onCanPlay}
-        onTimeUpdate={onTimeUpdate}
-        onEnded={() => next && goNext()}
-      >
-        <MediaProvider>
-          {tracks.map((t) => (
-            <Track
-              key={`sub-${t.index}`}
-              src={t.vttUrl}
-              kind="subtitles"
-              label={t.label}
-              lang={t.language ?? undefined}
-              type="vtt"
-            />
-          ))}
-        </MediaProvider>
-        {/* Vidstack's shipped layout, repainted via CSS variables in
-            globals.css. Spec §10: do not hand-roll video controls. */}
-        <DefaultVideoLayout icons={defaultLayoutIcons} />
-      </MediaPlayer>
+      {/* The poster. Drawn under the video rather than instead of it, so the
+          frame is never empty and never resizes when the source arrives. */}
+      <div className="absolute inset-0" style={{ background: artTint(title) }} aria-hidden />
+
+      {src && (
+        <MediaPlayer
+          ref={player}
+          className="absolute inset-0 h-full w-full"
+          title={title}
+          // Explicit type, always. See mimeType() — an extensionless stream URL
+          // sends Vidstack down a cross-origin header probe that fails silently.
+          src={{ src, type: mime }}
+          // Required, not optional. The stream is cross-origin, and without this
+          // the video is a tainted source: JASSUB cannot construct a VideoFrame
+          // from it and dies before it ever fetches the subtitle file. The API
+          // sends Access-Control-Allow-Origin for the web origin to match.
+          crossOrigin
+          playsInline
+          autoPlay
+          keyShortcuts={{
+            togglePaused: "k Space",
+            seekBackward: "j ArrowLeft",
+            seekForward: "l ArrowRight",
+            toggleFullscreen: "f",
+            toggleMuted: "m",
+            volumeUp: "ArrowUp",
+            volumeDown: "ArrowDown",
+          }}
+          onCanPlay={onCanPlay}
+          onTimeUpdate={onTimeUpdate}
+          onEnded={() => next && goNext()}
+        >
+          <MediaProvider>
+            {tracks.map((t) => (
+              <Track
+                key={`sub-${t.index}`}
+                src={t.vttUrl}
+                kind="subtitles"
+                label={t.label}
+                lang={t.language ?? undefined}
+                type="vtt"
+              />
+            ))}
+          </MediaProvider>
+          {/* Vidstack's shipped layout, repainted via CSS variables in
+              globals.css. Spec §10: do not hand-roll video controls. */}
+          <DefaultVideoLayout icons={defaultLayoutIcons} />
+        </MediaPlayer>
+      )}
 
       {/* Styled rendering for the active ASS track. The VTT form stays
           registered above as the fallback, so captions survive a wasm failure. */}
@@ -282,28 +323,30 @@ export function Player({
 
       {/* Top chrome. Pointer-events off so it never steals clicks from the
           player surface; the interactive parts opt back in. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-(--z-player-chrome) flex items-start justify-between gap-4 bg-gradient-to-b from-bg-deep/80 to-transparent p-4 pb-16 sm:p-7 sm:pb-20">
-        <div className="pointer-events-auto flex min-w-0 items-center gap-3.5">
-          <Link
-            href={`/file/${file.id}`}
-            aria-label="Back to file details"
-            className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface/60 text-text backdrop-blur-md transition-colors hover:border-border-hover"
-          >
-            <ChevronLeft />
-          </Link>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <h1 className="truncate text-[15px] font-extrabold">{file.title}</h1>
-            <p className="truncate text-xs text-text-muted">
-              {[file.container?.toUpperCase(), file.video_codec, file.audio_codec]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
+      {backHref && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-(--z-player-chrome) flex items-start justify-between gap-4 bg-gradient-to-b from-bg-deep/80 to-transparent p-4 pb-16 sm:p-7 sm:pb-20">
+          <div className="pointer-events-auto flex min-w-0 items-center gap-3.5">
+            <Link
+              href={backHref}
+              aria-label="Back to file details"
+              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface/60 text-text backdrop-blur-md transition-colors hover:border-border-hover"
+            >
+              <ChevronLeft />
+            </Link>
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <h1 className="truncate text-[15px] font-extrabold">{title}</h1>
+              {subtitle && <p className="truncate text-xs text-text-muted">{subtitle}</p>}
+            </div>
           </div>
+          {strategy && (
+            <div className="pointer-events-auto hidden sm:block">
+              <StrategyChip strategy={strategy} />
+            </div>
+          )}
         </div>
-        <div className="pointer-events-auto hidden sm:block">
-          <StrategyChip file={file} />
-        </div>
-      </div>
+      )}
+
+      {children}
 
       {countdown !== null && next && (
         <div className="pointer-events-none absolute right-4 bottom-32 z-(--z-player-chrome) sm:right-7 sm:bottom-36">
@@ -318,6 +361,6 @@ export function Player({
           />
         </div>
       )}
-    </main>
+    </Frame>
   );
 }

@@ -8,6 +8,7 @@ import {
   ApiError,
   MediaFile,
   STRATEGY,
+  displayTitle,
   getFile,
   getLibrary,
   mimeType,
@@ -55,7 +56,10 @@ export default async function WatchPage({
   const strategy = STRATEGY[file.playback_strategy];
   const next = nextAfter(file, all);
 
-  if (!isPlayable(file)) {
+  // "unplayable" is a permanent property of the file, not an outage, so it
+  // never reaches the player: a DRM-encrypted track mounted as a source is a
+  // spinner that never resolves. isPlayable() only covers the PC being asleep.
+  if (!isPlayable(file) || file.availability === "unplayable") {
     return (
       <main className="grid min-h-dvh place-items-center bg-bg-deep p-8">
         <div className="flex max-w-lg flex-col items-start gap-4">
@@ -69,7 +73,7 @@ export default async function WatchPage({
           <h1 className="text-2xl font-extrabold text-balance">{file.title}</h1>
           <p className="flex items-center gap-2 text-sm font-bold text-accent">
             <span className="size-2 rounded-full bg-accent" aria-hidden />
-            Not playable right now
+            {file.availability === "unplayable" ? "This file can't be played" : "Not playable right now"}
           </p>
           <p className="text-sm leading-relaxed text-text-dim">
             {file.availability_note ?? strategy.note} The file is catalogued and its details are on
@@ -85,11 +89,17 @@ export default async function WatchPage({
 
   return (
     <Player
-      file={file}
       src={playbackUrl(file)}
       mime={mimeType(file)}
+      title={file.title}
+      subtitle={[file.container?.toUpperCase(), file.video_codec, file.audio_codec]
+        .filter(Boolean)
+        .join(" · ")}
+      backHref={`/file/${file.id}`}
+      progressKey={file.id}
       tracks={subtitleTracks(file)}
-      next={next}
+      strategy={file.playback_strategy}
+      next={next && { href: `/watch/${next.id}`, label: displayTitle(next).label, seed: next.title }}
       restart={restart === "1"}
     />
   );

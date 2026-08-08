@@ -19,6 +19,10 @@ dependencies = [
     # so they are routed by kind rather than chained.
     "anitopy>=2.1",
     "guessit>=3.8",
+    # Schema changes. create_all() can add a table but never alter one, and the
+    # catalogue accumulates — the 669 releases in it cannot be rebuilt by
+    # rescanning, because Prowlarr only ever shows its front page.
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]

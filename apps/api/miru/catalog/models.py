@@ -59,11 +59,21 @@ class CatalogWork(Base):
     A card on the wall is a work, not a release. The top of the anime list by
     seeders is four separate rows for the same show, so a wall built from
     releases is a wall of One Piece.
+
+    Identity is the metadata provider's id once a title resolves to one, and the
+    parsed title only until then. Measured on the live catalogue, 21 title
+    prefixes covered 47 separate works — *Youjo Senki 幼女戦記*, *Saga of Tanya
+    the Evil* and *Youjo Senki 幼女戦記 Movie* share no characters, so no amount
+    of string cleaning merges them. AniList already knows all three are 21613.
     """
 
     __tablename__ = "catalog_works"
     __table_args__ = (
         UniqueConstraint("kind", "normalised_title", "year", name="uq_work_identity"),
+        # What makes one card out of romaji, English and native script. NULLs
+        # compare distinct in both Postgres and SQLite, so the unresolved works
+        # — which is most of them on day one — are unaffected.
+        UniqueConstraint("kind", "provider", "provider_id", name="uq_work_provider"),
         Index("ix_works_kind_seeders", "kind", "best_seeder_pct"),
         Index("ix_works_kind_first_seen", "kind", "first_seen_at"),
         Index("ix_works_kind_latest", "kind", "latest_release_at"),
