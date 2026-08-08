@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # Without it, films fall back to generated title cards rather than breaking.
     tmdb_api_key: str = ""
     poster_cache_path: str = ""
+
+    # Playable copies of MKV files. Stream-copy only, so these are cheap to make
+    # and cheap to lose; the cache is capped because a remux is the same size as
+    # its source and an unbounded one would double the library.
+    remux_cache_path: str = ""
+    remux_cache_bytes: int = 40 * 1024 * 1024 * 1024
     aria2_secret: str = ""
 
     # Transcode worker on the PC. Empty means no worker: files needing an

@@ -138,15 +138,37 @@ class TestRankingAcrossIndexers:
         assert pct["yts-a"] == 0.5 and pct["yts-b"] == 0.5
 
     def test_a_low_count_at_a_low_reporting_indexer_still_ranks_well(self):
-        # TPB's 2 seeders is the top of TPB, and must not lose to Nyaa's 10
-        # purely because Nyaa reports bigger numbers.
-        pct = seeder_percentiles(self._mixed())
-        assert pct["tpb"] == 1.0
-        assert pct["tpb"] > pct["nyaa-mid"]
+        # TPB's 2 seeders is the top of TPB and must not lose to Nyaa's 10
+        # purely because Nyaa reports bigger numbers. Both indexers are given a
+        # real sample here, because a percentile over two rows is meaningless
+        # whichever indexer it came from.
+        items = [
+            Candidate(f"n{i}", f"Show {i} 1080p x264", "Nyaa.si", n, 1_000_000_000, "1080p")
+            for i, n in enumerate([303, 100, 60, 30, 10, 4])
+        ] + [
+            Candidate(f"t{i}", f"Other {i} 720p x264", "The Pirate Bay", n, 7_000_000_000, "720p")
+            for i, n in enumerate([2, 2, 1, 1, 1, 0])
+        ]
+        pct = seeder_percentiles(items)
+        assert pct["t0"] == 1.0                 # top of its own indexer
+        assert pct["t0"] > pct["n4"]            # beats Nyaa's 10-seeder row
 
-    def test_the_top_of_each_indexer_ranks_equally(self):
+    def test_a_sample_too_small_to_rank_is_not_ranked(self):
+        # A percentile over one or two results is an accident, not a ranking:
+        # a lone 1-seeder result would score 1.0 and top the Trending rail.
+        # The regional catalog_queries produce exactly that shape.
         pct = seeder_percentiles(self._mixed())
-        assert pct["nyaa-top"] == pct["tpb"] == 1.0
+        assert pct["tpb"] == 0.5
+        assert pct["nyaa-top"] == 0.5
+
+    def test_a_real_sample_still_ranks(self):
+        items = [
+            Candidate(f"n{i}", f"Show {i} 1080p x264", "Nyaa.si", n, 1_000_000_000, "1080p")
+            for i, n in enumerate([300, 200, 100, 50, 10, 1])
+        ]
+        pct = seeder_percentiles(items)
+        assert pct["n0"] == 1.0
+        assert pct["n5"] < pct["n0"]
 
 
 class TestPickingOnTheUsersBehalf:

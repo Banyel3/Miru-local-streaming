@@ -24,6 +24,14 @@ DIRECT = "direct"
 REMUX = "remux"
 TRANSCODE_AUDIO = "transcode_audio"
 TRANSCODE_FULL = "transcode_full"
+# Nothing can play this — not the browser, not the GPU, not ffmpeg. Measured on
+# a Crunchyroll WEB-DL whose video track was never decrypted: ffprobe reports
+# `codec_name=unknown, codec_tag_string=encv` and ffmpeg refuses even to remux
+# it ("Could not find tag for codec none in stream #0").
+UNPLAYABLE = "unplayable"
+
+# MPEG Common Encryption track markers.
+ENCRYPTED_TAGS = {"encv", "enca"}
 
 
 @dataclass
@@ -31,6 +39,10 @@ class Probe:
     duration_ms: int | None = None
     container: str | None = None
     video_codec: str | None = None
+    # The container's own four-character code for the track. Kept because it is
+    # the only thing that distinguishes an encrypted stream from an unprobed
+    # one — both leave codec_name empty.
+    video_tag: str | None = None
     audio_codec: str | None = None
     audio_channels: int | None = None
     width: int | None = None
@@ -40,6 +52,9 @@ class Probe:
 
 def resolve_strategy(p: Probe) -> str:
     """Lowest rung of the ladder that will play this file."""
+    if is_unplayable(p):
+        return UNPLAYABLE
+
     if p.video_codec is None:
         # Unprobed or audio-only. Serve it and let the browser decide; a wrong
         # `direct` costs one failed play, a wrong `transcode_full` costs GPU
@@ -66,6 +81,25 @@ def resolve_strategy(p: Probe) -> str:
     if not container_ok:
         return REMUX
     return DIRECT
+
+
+def is_unplayable(p: Probe) -> bool:
+    """Whether this file is undecodable rather than merely awkward.
+
+    Told apart from "not probed yet" by the dimensions. ffprobe reports width
+    and height for an encrypted track because those live in the container
+    header, outside the encryption; a file that genuinely failed to probe has
+    neither. Without this distinction resolve_strategy takes the optimistic
+    branch and returns `direct`, and the user gets a black player forever with
+    no explanation — which is what happened.
+    """
+    if (p.video_tag or "").lower() in ENCRYPTED_TAGS:
+        return True
+    return (
+        p.video_codec in (None, "none", "unknown")
+        and bool(p.width)
+        and bool(p.height)
+    )
 
 
 def _container_from(format_name: str, path: Path) -> str:
@@ -103,6 +137,7 @@ def probe_file(path: Path) -> Probe:
         duration_ms=int(float(duration) * 1000) if duration else None,
         container=_container_from(fmt.get("format_name", ""), path),
         video_codec=video.get("codec_name"),
+        video_tag=video.get("codec_tag_string"),
         audio_codec=audio.get("codec_name"),
         audio_channels=audio.get("channels"),
         width=video.get("width"),

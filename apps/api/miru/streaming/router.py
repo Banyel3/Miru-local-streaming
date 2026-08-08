@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 
 from miru.core.db import get_db
 from miru.library.models import MediaFile
+from miru.streaming import remux
 from miru.transcode.worker import NEEDS_WORKER, availability, hls_url
 
 router = APIRouter(prefix="/api/stream", tags=["streaming"])
@@ -39,6 +40,21 @@ def stream(file_id: int, db: Session = Depends(get_db)):
     path = Path(record.path)
     if not path.is_file():
         raise HTTPException(410, "file is gone — rescan the library")
+
+    # An MKV is not something a browser can decode, so serve the remuxed copy
+    # instead. It is the same video and audio in a container the browser
+    # accepts, and it is a real file, so seeking still comes from the same
+    # tested Range path rather than from anything new.
+    if record.playback_strategy == "remux":
+        state = remux.state(file_id, path)
+        if state == "ready":
+            path = remux.cached_path(file_id, path)
+        else:
+            remux.ensure(file_id, path)
+            raise HTTPException(
+                425 if state != "failed" else 500,
+                remux.error(file_id) or "Preparing this file for playback — try again shortly.",
+            )
 
     return FileResponse(
         path,

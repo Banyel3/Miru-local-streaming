@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,11 +44,30 @@ log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _opener: urllib.request.OpenerDirector | None = None
 
+# A sleeping PC drops packets rather than refusing them, so a connect attempt
+# costs the full timeout. Without remembering that, every caller pays it again:
+# one poll over three past downloads was 45 seconds of a threadpool worker, and
+# the UI polls faster than that drains. Two browser tabs then take the whole API
+# down — including /api/health and library playback, which have nothing to do
+# with the PC.
+_failed_until = 0.0
+_FAIL_TTL_S = 20.0
+_TIMEOUT_S = 4.0
+
 
 def _base() -> str:
     if not settings.qbittorrent_url:
         raise AcquisitionError("qBittorrent is not configured")
     return settings.qbittorrent_url.rstrip("/")
+
+
+def _recently_failed() -> bool:
+    return time.monotonic() < _failed_until
+
+
+def _mark_failed() -> None:
+    global _failed_until
+    _failed_until = time.monotonic() + _FAIL_TTL_S
 
 
 def _login() -> urllib.request.OpenerDirector:
@@ -62,9 +82,10 @@ def _login() -> urllib.request.OpenerDirector:
         headers={"Referer": _base()},
     )
     try:
-        with opener.open(req, timeout=15) as res:
+        with opener.open(req, timeout=_TIMEOUT_S) as res:
             body = res.read().decode().strip()
     except OSError as exc:
+        _mark_failed()
         raise AcquisitionError(f"Can't reach qBittorrent: {exc}") from exc
     if body != "Ok.":
         raise AcquisitionError("qBittorrent rejected the login")
@@ -73,17 +94,27 @@ def _login() -> urllib.request.OpenerDirector:
 
 def _call(path: str, params: dict | None = None, *, retry: bool = True) -> str:
     global _opener
+    if _recently_failed():
+        raise AcquisitionError("qBittorrent is unreachable")
+
+    # Logging in OUTSIDE the lock. Holding a process-wide lock across a network
+    # call serialises every other request in the process behind a machine that
+    # is asleep, which is how one slow call became an outage.
     with _lock:
-        if _opener is None:
-            _opener = _login()
         opener = _opener
+    if opener is None:
+        fresh = _login()
+        with _lock:
+            if _opener is None:
+                _opener = fresh
+            opener = _opener
 
     data = urllib.parse.urlencode(params).encode() if params else None
     req = urllib.request.Request(
         f"{_base()}/api/v2{path}", data=data, headers={"Referer": _base()}
     )
     try:
-        with opener.open(req, timeout=30) as res:
+        with opener.open(req, timeout=_TIMEOUT_S) as res:
             return res.read().decode()
     except urllib.error.HTTPError as exc:
         if exc.code == 403 and retry:
@@ -93,6 +124,7 @@ def _call(path: str, params: dict | None = None, *, retry: bool = True) -> str:
             return _call(path, params, retry=False)
         raise AcquisitionError(f"qBittorrent said {exc.code}") from exc
     except OSError as exc:
+        _mark_failed()
         raise AcquisitionError(f"Can't reach qBittorrent: {exc}") from exc
 
 

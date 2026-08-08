@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from miru.core.config import settings
-from miru.library.incoming import promote
+from miru.library.incoming import link_catalog_work, promote
 from miru.library.models import Job, MediaFile
 from miru.transcode.strategy import probe_file, resolve_strategy
 from miru.transcode.subtitles import find_sidecars
@@ -41,8 +41,10 @@ def scan(db: Session, roots: list[Path] | None = None) -> dict:
     # Finished downloads join the library first, so a single scan both promotes
     # and indexes them rather than needing two passes.
     moved = {"promoted": 0, "waiting": 0}
+    promoted_names: list[str] = []
     if settings.incoming and roots:
         moved = promote(settings.incoming, roots[0], settings.incoming_settle_seconds)
+        promoted_names = moved.pop("names", [])
     existing = {f.path: f for f in db.scalars(select(MediaFile))}
     added = updated = unchanged = 0
     seen: set[str] = set()
@@ -86,6 +88,14 @@ def scan(db: Session, roots: list[Path] | None = None) -> dict:
         db.delete(record)
 
     db.commit()
+    # Point each just-promoted file at the catalog card that asked for it.
+    # Without this the card never leaves "Adding to your library…", the ready
+    # toast never fires, and the wall keeps offering something already owned.
+    for name in promoted_names:
+        row = db.query(MediaFile).filter(MediaFile.path.like(f"%/{name}")).first()
+        if row is not None:
+            link_catalog_work(db, Path(row.path), row.id)
+
     return {
         "added": added,
         "updated": updated,

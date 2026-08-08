@@ -55,6 +55,36 @@ def is_settled(entry: Path, settle_seconds: float, now: float | None = None) -> 
         return False
 
 
+def link_catalog_work(db, path, file_id: int) -> None:
+    """Point the catalog card at the file it became.
+
+    Without this the card never leaves "Adding to your library…", the ready
+    toast never fires, and the wall keeps offering to download something you
+    already own. The column existed and nothing ever wrote it.
+
+    Matched on the download's own name rather than on a parsed title, because
+    the downloader named the file and that is the one string both sides agree
+    on.
+    """
+    try:
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        stem = path.name
+        rel = (
+            db.query(CatalogRelease)
+            .filter(CatalogRelease.title.ilike(f"%{stem.rsplit('.', 1)[0][:60]}%"))
+            .first()
+        )
+        if rel is None or rel.work_id is None:
+            return
+        work = db.get(CatalogWork, rel.work_id)
+        if work is not None and work.library_file_id is None:
+            work.library_file_id = file_id
+            db.commit()
+    except Exception:  # noqa: BLE001 - a failed link must not fail the scan
+        log.warning("could not link %s to a catalog work", path.name, exc_info=True)
+
+
 def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dict:
     """Move every settled entry from incoming into the library.
 
@@ -62,9 +92,11 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
     single undeletable file should not stop the rest of a scan.
     """
     if not incoming.is_dir() or not library.is_dir():
-        return {"promoted": 0, "waiting": 0}
+        return {"promoted": 0, "waiting": 0, "names": []}
 
     promoted = waiting = 0
+    # Reported so the scan can point each catalog card at the file it became.
+    names: list[str] = []
     for entry in sorted(incoming.iterdir()):
         if entry.name.startswith("."):
             continue
@@ -87,8 +119,9 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
             shutil.move(str(entry), str(target))
             log.info("promoted %s into the library", entry.name)
             promoted += 1
+            names.append(entry.name)
         except OSError as exc:
             log.warning("could not promote %s: %s", entry.name, exc)
             waiting += 1
 
-    return {"promoted": promoted, "waiting": waiting}
+    return {"promoted": promoted, "waiting": waiting, "names": names}

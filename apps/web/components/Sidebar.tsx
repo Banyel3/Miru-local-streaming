@@ -129,7 +129,14 @@ function Downloading({ onNavigate }: { onNavigate?: () => void }) {
       if (!("error" in res)) {
         setRows(res.downloads.filter((d) => d.state !== "done" || !d.in_library));
       }
-      timer = setTimeout(tick, res && !("error" in res) && res.downloads.length ? 3000 : 20000);
+      // Keyed off what is actually moving, not off the list length. The set of
+      // works with a download_job_id never shrinks, so keying on its size meant
+      // polling every 3s forever - on every page, with the list empty and
+      // nothing to show for it.
+      const busy =
+        !("error" in res) &&
+        res.downloads.some((d) => d.state === "downloading" || d.state === "queued");
+      timer = setTimeout(tick, busy ? 3000 : 30000);
     };
     tick();
     return () => {

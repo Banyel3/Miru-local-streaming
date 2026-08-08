@@ -182,7 +182,12 @@ class TestRankingIsStoredPerIndexer:
         assert yts.seeder_pct == 0.5
 
     def test_a_work_carries_its_best_standing_for_the_rails(self, db_session):
-        refresh(db_session, FakeProvider([ONE_PIECE]))
+        # Six results, enough for the percentile to mean something.
+        many = [
+            result(f"[RLSP] One Piece {700 + i} [BD 720p]", seeders=300 - i * 40)
+            for i in range(6)
+        ]
+        refresh(db_session, FakeProvider([many]))
         work = db_session.execute(select(CatalogWork)).scalar_one()
         assert work.best_seeder_pct == 1.0
 

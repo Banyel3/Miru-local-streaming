@@ -28,6 +28,9 @@ from miru.catalog.parse import JUNK, needs_pc
 # Below this, a torrent is a coin flip rather than a download.
 VIABLE_SEEDERS = 5
 
+# Below this many results from one indexer, its ordering says nothing.
+MIN_SAMPLE = 5
+
 # Preference order when the user has not asked for anything specific. 1080p
 # first because it is the quality/size knee for a single viewer; 2160p last
 # because it is many times the bytes and always needs the GPU.
@@ -65,7 +68,10 @@ def seeder_percentiles(items: list[Candidate]) -> dict[str, float]:
         counts = sorted(c.seeders for c in group)
         top = counts[-1] if counts else 0
         for c in group:
-            if top <= 0:
+            # A percentile over one or two results is not a ranking, it is an
+            # accident: a single 1-seeder result would score 1.0 and top the
+            # Trending rail. Narrow regional queries produce exactly that.
+            if top <= 0 or len(counts) < MIN_SAMPLE:
                 out[c.id] = 0.5
             else:
                 # Fraction of this indexer's releases this one is at least as

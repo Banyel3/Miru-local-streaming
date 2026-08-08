@@ -12,6 +12,12 @@ def _aged(path: Path, seconds: float) -> None:
     os.utime(path, (old, old))
 
 
+def _counts(result: dict) -> dict:
+    """Only the counters. `names` is reported so the scan can link promoted
+    files to their catalog cards; it is not what these tests are about."""
+    return {k: v for k, v in result.items() if k != "names"}
+
+
 def test_a_file_still_being_written_is_not_settled(tmp_path):
     f = tmp_path / "movie.mkv"
     f.write_bytes(b"x")
@@ -56,7 +62,7 @@ def test_promote_moves_only_settled_entries(tmp_path):
     busy = inc / "Downloading.mkv"; busy.write_bytes(b"x")
     part = inc / "Stalled.mkv.part"; part.write_bytes(b"x"); _aged(part, 300)
 
-    assert promote(inc, lib, settle_seconds=120) == {"promoted": 1, "waiting": 2}
+    assert _counts(promote(inc, lib, settle_seconds=120)) == {"promoted": 1, "waiting": 2}
     assert (lib / "Finished.mkv").exists()
     assert not done.exists()
     assert busy.exists() and part.exists()
@@ -68,7 +74,7 @@ def test_promote_never_overwrites_something_already_in_the_library(tmp_path):
     (lib / "Movie.mkv").write_bytes(b"original")
     dup = inc / "Movie.mkv"; dup.write_bytes(b"new"); _aged(dup, 300)
 
-    assert promote(inc, lib, settle_seconds=120) == {"promoted": 0, "waiting": 1}
+    assert _counts(promote(inc, lib, settle_seconds=120)) == {"promoted": 0, "waiting": 1}
     assert (lib / "Movie.mkv").read_bytes() == b"original"
 
 
@@ -76,5 +82,5 @@ def test_dotfiles_are_ignored(tmp_path):
     inc, lib = tmp_path / "incoming", tmp_path / "media"
     inc.mkdir(); lib.mkdir()
     hidden = inc / ".from-pc"; hidden.write_bytes(b"x"); _aged(hidden, 300)
-    assert promote(inc, lib, settle_seconds=120) == {"promoted": 0, "waiting": 0}
+    assert _counts(promote(inc, lib, settle_seconds=120)) == {"promoted": 0, "waiting": 0}
     assert hidden.exists()

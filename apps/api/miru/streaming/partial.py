@@ -128,13 +128,24 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
 
     start, end = 0, ceiling - 1
     if range_header:
-        m = _RANGE.match(range_header)
+        # fullmatch, not match: "bytes=0-10,20-30" used to be accepted and then
+        # answered with only the first range, and "bytes=100-50" produced a
+        # negative Content-Length on the wire.
+        m = _RANGE.fullmatch(range_header.strip())
         if not m:
-            raise HTTPException(416, "Bad range")
+            # RFC 9110 §14.2: an unsatisfiable *syntax* is ignored, not 416'd.
+            m = None
+    if range_header and m:
         raw_start, raw_end = m.group(1), m.group(2)
         if raw_start:
             start = int(raw_start)
-            if raw_end:
+            # Checked against the RAW end, before clamping. A request whose end
+            # is below its start is malformed and is ignored; one that merely
+            # reaches past the ceiling is unsatisfiable and must still 416
+            # below, which is a different answer.
+            if raw_end and int(raw_end) < start:
+                start, end = 0, ceiling - 1
+            elif raw_end:
                 end = min(int(raw_end), ceiling - 1)
             else:
                 end = ceiling - 1

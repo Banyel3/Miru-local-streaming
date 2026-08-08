@@ -99,7 +99,15 @@ export function ReleaseSheet({
         if ("error" in res) return setError("Couldn't load the releases for this.");
         const d = res.work;
         setDetail(d);
-        setChosen(d.choices.best?.info_hash ?? d.releases.find((r) => r.grabbable)?.info_hash ?? null);
+        // Staleness matters in the fallback too. The table's own click handler
+        // already refuses stale rows, so without this the *default* selection
+        // was the one path that could submit a release the system had decided
+        // was a corpse.
+        setChosen(
+          d.choices.best?.info_hash ??
+            d.releases.find((r) => r.grabbable && !r.stale)?.info_hash ??
+            null,
+        );
       })
       .catch(() => live && setError("Couldn't load the releases for this."));
     return () => {

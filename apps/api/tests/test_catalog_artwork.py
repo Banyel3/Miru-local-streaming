@@ -185,3 +185,56 @@ class TestTheWallExplainsMissingFilmArt:
 
         monkeypatch.setattr(settings, "tmdb_api_key", "abc")
         assert client.get("/api/catalog").json()["artwork"]["tmdb_configured"] is True
+
+
+class TestUndecodableFiles:
+    """A DRM-encrypted release is not a transcoding problem and must not be
+    worded like one. Measured on a real Crunchyroll WEB-DL whose video track was
+    never decrypted."""
+
+    def _encrypted(self):
+        from miru.transcode.strategy import Probe
+
+        # What ffprobe actually returns for it: no codec, but real dimensions.
+        return Probe(container="matroska", video_codec=None, video_tag="encv",
+                     audio_codec="aac", width=1920, height=1080)
+
+    def test_an_encrypted_track_is_unplayable_not_direct(self):
+        from miru.transcode.strategy import resolve_strategy
+
+        # Previously this returned `direct` on the optimistic branch, and the
+        # user got a black player forever with no explanation.
+        assert resolve_strategy(self._encrypted()) == "unplayable"
+
+    def test_a_genuinely_unprobed_file_is_still_optimistic(self):
+        from miru.transcode.strategy import Probe, resolve_strategy
+
+        # The distinguishing signal is the dimensions: an encrypted track has
+        # them, an unprobed file does not.
+        assert resolve_strategy(Probe()) == "direct"
+
+    def test_it_never_reaches_the_gpu(self):
+        from miru.transcode.worker import NEEDS_WORKER
+
+        assert "unplayable" not in NEEDS_WORKER
+
+    def test_the_note_says_what_is_wrong_and_what_to_do(self, monkeypatch):
+        from miru.transcode.worker import availability
+
+        state, note = availability("unplayable")
+        assert state == "unplayable"
+        assert "encrypted" in note.lower()
+        # Not "the PC is offline" — waking it would not help.
+        assert "offline" not in note.lower()
+
+
+class TestRemuxStaysOnTheLaptop:
+    def test_remux_never_requires_the_pc(self):
+        # DEPLOYMENT.md lists this among the decisions not to re-litigate:
+        # remux is stream-copy, measured at 0.37s CPU per ten-minute film, and
+        # sending it to the PC would make the PC a hard dependency for the
+        # majority rung of an anime library.
+        from miru.transcode.worker import NEEDS_WORKER, availability
+
+        assert "remux" not in NEEDS_WORKER
+        assert availability("remux")[0] == "available"

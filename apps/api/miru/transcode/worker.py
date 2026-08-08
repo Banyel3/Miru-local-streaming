@@ -18,8 +18,19 @@ from miru.core.config import settings
 
 log = logging.getLogger(__name__)
 
-# Rungs that require an encoder to run. These are the ones that need the PC.
+# Rungs that require an ENCODER, which is what the PC is for.
+#
+# `remux` is deliberately NOT here. It is stream-copy, DEPLOYMENT.md §4 measured
+# it at 0.37s of CPU for a ten-minute film, and that document lists "remux stays
+# on the laptop" among the decisions not to re-litigate: pushing it to the PC
+# would make the PC a hard dependency for the majority rung of an anime library
+# and defeat the point of the layout. It is served from the laptop — see
+# streaming/remux.py.
 NEEDS_WORKER = {"transcode_audio", "transcode_full"}
+
+# Nothing can play these, so they never reach an encoder — there is nothing a
+# GPU can do about an encrypted track.
+NEVER_PLAYABLE = {"unplayable"}
 
 # Health is cached so the library page never pays for a network round trip per
 # file, and never blocks on a machine that is asleep.
@@ -69,6 +80,13 @@ def availability(strategy: str) -> tuple[str, str | None]:
     A stored value would go stale the moment the PC came back, and the whole
     point is that the answer changes without the library changing.
     """
+    if strategy in NEVER_PLAYABLE:
+        # Not a capacity problem and not something waking the PC would fix, so
+        # it must not be worded like one.
+        return "unplayable", (
+            "This release is DRM-encrypted, so nothing can play it. "
+            "Try a different release."
+        )
     if strategy not in NEEDS_WORKER:
         return "available", None
     if not worker_configured():
@@ -87,6 +105,9 @@ def hls_url(file_id: int, strategy: str, height: int | None) -> str:
     or it could not have reached Miru at all.
     """
     source = f"{settings.public_api_url.rstrip('/')}/api/stream/{file_id}"
+    # Video is copied for both rungs that do not need the picture re-encoded:
+    # `remux` only rewrites the container, and `transcode_audio` only touches
+    # the audio. Only `transcode_full` actually needs the GPU.
     params = {"src": source, "copy_video": str(strategy == "transcode_audio").lower()}
     if height:
         params["height"] = str(height)

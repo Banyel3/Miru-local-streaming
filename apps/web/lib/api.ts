@@ -11,9 +11,9 @@ export type MediaFile = {
   width: number | null;
   height: number | null;
   subtitle_streams: { index: number; codec: string; language: string | null }[];
-  playback_strategy: "direct" | "remux" | "transcode_audio" | "transcode_full";
+  playback_strategy: "direct" | "remux" | "transcode_audio" | "transcode_full" | "unplayable";
   /** Derived per request by the API from (strategy, worker reachable). */
-  availability: "available" | "gpu-ready" | "unavailable";
+  availability: "available" | "gpu-ready" | "unavailable" | "unplayable";
   availability_note: string | null;
   /** Absolute worker URL when this file needs transcoding, else null. */
   hls_url: string | null;
@@ -255,6 +255,10 @@ export const subtitleSummary = (f: MediaFile) => {
 };
 
 export const STRATEGY: Record<MediaFile["playback_strategy"], { label: string; note: string }> = {
+  unplayable: {
+    label: "Unplayable",
+    note: "The video track is DRM-encrypted, so nothing can decode it — not this player, not the PC, not VLC. A different release is the only fix.",
+  },
   direct: { label: "Direct Play", note: "Served straight from disk, no re-encoding." },
   remux: { label: "Remux", note: "Container rewritten; the video stream is copied untouched." },
   transcode_audio: {

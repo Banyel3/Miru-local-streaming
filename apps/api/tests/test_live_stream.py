@@ -136,3 +136,35 @@ class TestSafety:
         monkeypatch.setattr(live, "supports_streaming", lambda: False)
         assert client.get("/api/stream/live/abc").status_code == 409
         assert client.get("/api/stream/live/abc/status").status_code == 409
+
+
+class TestRangeHeaderIsNotHandRolledBadly:
+    """The parser is hand-written, so it gets the adversarial cases in writing."""
+
+    def test_an_inverted_range_is_ignored_rather_than_framed_negatively(self, client, growing, dl):
+        # bytes=100-50 used to compute length = -49 and put
+        # `Content-Length: -49` on the wire, which lets any intermediary do
+        # whatever it likes with the connection.
+        r = client.get("/api/stream/live/abc", headers={"Range": "bytes=100-50"})
+        assert r.status_code == 206
+        assert int(r.headers["content-length"]) > 0
+
+    def test_a_multi_range_request_is_not_silently_answered_with_one_range(
+        self, client, growing, dl
+    ):
+        # Answering only the first range while claiming 206 is a lie the client
+        # cannot detect.
+        r = client.get("/api/stream/live/abc", headers={"Range": "bytes=0-10,20-30"})
+        assert r.status_code == 206
+        assert r.headers["content-range"] == "bytes 0-8191/20480"
+
+    def test_a_garbage_range_serves_the_file_rather_than_416(self, client, growing, dl):
+        # RFC 9110 §14.2: a malformed Range is ignored, not refused.
+        r = client.get("/api/stream/live/abc", headers={"Range": "bytes=abc-"})
+        assert r.status_code == 206
+
+    def test_seeking_past_the_ceiling_is_still_a_416(self, client, growing, dl):
+        # The one case that must NOT be swallowed by the malformed-range rule.
+        assert client.get(
+            "/api/stream/live/abc", headers={"Range": "bytes=9000-9999"}
+        ).status_code == 416

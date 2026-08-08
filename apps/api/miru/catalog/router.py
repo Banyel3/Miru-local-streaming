@@ -308,11 +308,15 @@ def downloads(db: Session = Depends(get_db)):
     downloading cards polling individually is eight requests every two seconds
     to a machine that is already busy saturating its disk.
     """
+    # Asked once, before touching the downloader at all. Without this the poll
+    # tries every past download against a machine that is asleep, and the cost
+    # is paid per work per poll.
+    up = pc_reachable()
     works = list(
         db.execute(select(CatalogWork).where(CatalogWork.download_job_id.isnot(None))).scalars()
     )
-    if not works:
-        return {"pc_reachable": pc_reachable(), "streaming": supports_streaming(), "downloads": []}
+    if not works or not up:
+        return {"pc_reachable": up, "streaming": supports_streaming(), "downloads": []}
 
     out = []
     for w in works:

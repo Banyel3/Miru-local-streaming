@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from miru.core.db import get_db
 from miru.library.models import Job, MediaFile
 from miru.library.scanner import run_scan_job
+from miru.streaming import remux
 from miru.transcode.worker import NEEDS_WORKER, availability, hls_url
 
 router = APIRouter(prefix="/api", tags=["library"])
@@ -44,6 +45,16 @@ class MediaFileOut(BaseModel):
     @model_validator(mode="after")
     def _derive_availability(self):
         self.availability, self.availability_note = availability(self.playback_strategy)
+        if self.playback_strategy == "remux":
+            from pathlib import Path as _P
+
+            st = remux.state(self.id, _P(self.path))
+            if st == "working":
+                self.availability = "preparing"
+                self.availability_note = "Repackaging this for playback — a few seconds."
+            elif st == "failed":
+                self.availability = "unavailable"
+                self.availability_note = remux.error(self.id) or "Couldn't repackage this file."
         if self.playback_strategy in NEEDS_WORKER and self.availability == "gpu-ready":
             self.hls_url = hls_url(self.id, self.playback_strategy, self.height)
         return self
