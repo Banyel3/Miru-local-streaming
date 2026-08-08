@@ -16,10 +16,13 @@ only ever a search term.
 Two entry points, deliberately different:
 
 - `cached()` reads the resolution table and never touches the network, because
-  it runs inside the ingest pass. A refresh must not stall behind ninety
-  requests a minute.
+  it runs inside the ingest pass. A refresh must not stall behind a provider
+  that answers 75 times a minute.
 - `resolve()` fills that table, one distinct title at a time, from the
   enrichment pass that already runs after ingest and is already bounded.
+
+One lookup per distinct *title*, not per release: 193 anime releases carry well
+under a hundred names, and new episodes of a known show cost nothing at all.
 
 A title that resolves to nothing keeps grouping by title, which is exactly
 today's behaviour, so nothing regresses.
@@ -28,8 +31,6 @@ today's behaviour, so nothing regresses.
 from __future__ import annotations
 
 import logging
-import threading
-import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,47 +39,6 @@ from miru.catalog.models import CatalogWork, TitleResolution
 from miru.catalog.parse import normalised
 
 log = logging.getLogger(__name__)
-
-# AniList's published limit is 90 requests a minute. Held below it rather than
-# at it: going over returns 429 for the rest of the minute, and the pass that
-# trips it is the pass that resolves nothing.
-_MIN_INTERVAL = 60 / 75
-_lock = threading.Lock()
-_last_call = 0.0
-
-
-def _throttle() -> None:
-    global _last_call
-    with _lock:
-        wait = _MIN_INTERVAL - (time.monotonic() - _last_call)
-        if wait > 0:
-            time.sleep(wait)
-        _last_call = time.monotonic()
-
-
-def _widen(kind: str, title: str, year: int | None) -> dict | None:
-    """Try again with the tail of the title dropped, a word at a time.
-
-    Release names carry tails no provider has heard of — "NCOP+NCED",
-    "Tagalog", "S01E1172", "1985 LDRip". Measured: 33 of 135 distinct anime
-    titles missed on the full string, and shortening recovers 15 of them,
-    *Ore Monogatari!!* and *One Piece* among them.
-    """
-    import miru.catalog.enrich as enrich
-
-    words = title.split()
-    for n in range(len(words) - 1, 0, -1):
-        _throttle()
-        data = enrich.lookup(kind, " ".join(words[:n]), year)
-        if data is None:
-            continue
-        # Accepted only if the provider's own name is really in the release
-        # title. Without this, "Detective Conan Movie 2 The Fourteenth Target"
-        # shortens to a *different* Conan film — a merged card offering the
-        # wrong download, which parse.py's rule says is worse than a split one.
-        got = normalised(data.get("display_title") or "")
-        return data if got and got in normalised(title) else None
-    return None
 
 
 def _row(db: Session, kind: str, key: str) -> TitleResolution | None:
@@ -110,8 +70,7 @@ def resolve(db: Session, kind: str, title: str, year: int | None) -> dict | None
     # fetchers stay monkeypatchable and so enrich.py can call back into this.
     import miru.catalog.enrich as enrich
 
-    _throttle()
-    data = enrich.lookup(kind, title, year) or _widen(kind, title, year)
+    data = enrich.lookup(kind, title, year)
     db.add(
         TitleResolution(
             kind=kind,

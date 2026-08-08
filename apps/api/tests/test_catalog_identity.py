@@ -37,7 +37,7 @@ TANYA = {
 @pytest.fixture(autouse=True)
 def no_waiting(monkeypatch):
     """The rate limiter is real; its 0.8s per call is not what these test."""
-    monkeypatch.setattr(resolve_mod, "_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(enrich, "_MIN_INTERVAL", 0.0)
 
 
 def fake_lookup(calls, answers):
@@ -144,54 +144,88 @@ class TestResolutionIsCachedPerTitle:
         calls = []
         monkeypatch.setattr(enrich, "lookup", fake_lookup(calls, {}))
         assert resolve_mod.resolve(db_session, "anime", "Nobody Knows", None) is None
+        asked = list(calls)
         assert resolve_mod.resolve(db_session, "anime", "Nobody Knows", None) is None
-        assert calls == ["Nobody Knows"]
+        assert calls == asked
 
-    def test_a_release_tail_the_provider_never_heard_of_is_dropped(
-        self, db_session, monkeypatch
-    ):
+
+class TestATitleThatOnlyAlmostMatches:
+    def test_a_release_tail_the_provider_never_heard_of_is_dropped(self, monkeypatch):
         # Measured: "Ore Monogatari NCOP NCED" and "One Piece S01E1172" miss on
-        # the full string and hit on the first two words. 15 of 33 unresolved
-        # anime titles come back this way.
-        calls = []
-        monkeypatch.setattr(enrich, "lookup", fake_lookup(calls, {
-            "Ore Monogatari": {**TANYA, "provider_id": "20946",
-                               "display_title": "Ore Monogatari!!"},
-        }))
-        got = resolve_mod.resolve(db_session, "anime", "Ore Monogatari NCOP NCED", None)
-        assert got["provider_id"] == "20946"
-        assert calls == ["Ore Monogatari NCOP NCED", "Ore Monogatari NCOP", "Ore Monogatari"]
+        # the full string and hit on the first two words. 15 of the 33
+        # unresolved anime titles come back this way.
+        asked = []
 
-    def test_a_shortened_search_that_finds_something_else_is_refused(
-        self, db_session, monkeypatch
-    ):
+        def anilist(term):
+            asked.append(term)
+            if term != "Ore Monogatari":
+                return None
+            return {**TANYA, "provider_id": "20946", "display_title": "My Love Story!!",
+                    "names": ["Ore Monogatari!!", "My Love Story!!"]}
+
+        monkeypatch.setattr(enrich, "_anilist", anilist)
+        got = enrich.lookup("anime", "Ore Monogatari NCOP NCED", None)
+
+        assert got["provider_id"] == "20946"
+        assert asked == ["Ore Monogatari NCOP NCED", "Ore Monogatari NCOP", "Ore Monogatari"]
+
+    def test_the_match_is_checked_against_every_name_not_the_shown_one(self, monkeypatch):
+        # AniList shows English and the release names romaji, so checking the
+        # displayed title alone rejects the merge this exists to make: "Saga of
+        # Tanya the Evil" is nowhere in "Youjo Senki 幼女戦記 Movie".
+        monkeypatch.setattr(enrich, "_anilist", lambda t: (
+            {**TANYA, "names": ["Youjo Senki", "Saga of Tanya the Evil", "幼女戦記"]}
+            if t == "Youjo Senki" else None
+        ))
+        got = enrich.lookup("anime", "Youjo Senki 幼女戦記 Movie", None)
+        assert got["provider_id"] == "21613"
+
+    def test_a_shortened_search_that_finds_something_else_is_refused(self, monkeypatch):
         # "Detective Conan Movie 2 The Fourteenth Target" shortens to a hit on a
         # *different* Conan film. Taking it would put this release on that
-        # film's card, which is a card offering the wrong download — worse than
-        # the split it would have fixed.
-        monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
-            "Detective Conan Movie 2": {
-                **TANYA, "provider_id": "169754", "format": "MOVIE",
-                "display_title": "Detective Conan: The Million-dollar Pentagram",
-            },
-        }))
-        assert resolve_mod.resolve(
-            db_session, "anime", "Detective Conan Movie 2 The Fourteenth Target", None
+        # film's card, which offers the wrong download — worse than the split it
+        # would have fixed.
+        monkeypatch.setattr(enrich, "_anilist", lambda t: (
+            {**TANYA, "provider_id": "169754", "format": "MOVIE",
+             "display_title": "Detective Conan: The Million-dollar Pentagram",
+             "names": ["Meitantei Conan: 100-man Dollar no Michishirube",
+                       "Detective Conan: The Million-dollar Pentagram"]}
+            if t == "Detective Conan Movie 2" else None
+        ))
+        monkeypatch.setattr(enrich, "_tmdb", lambda *a: None)
+        assert enrich.lookup(
+            "anime", "Detective Conan Movie 2 The Fourteenth Target", None
         ) is None
 
-    def test_the_rate_limiter_actually_spaces_the_calls(self, db_session, monkeypatch):
+    def test_the_good_source_is_exhausted_before_the_fallback_is_asked(self, monkeypatch):
+        # AniList misses "Youjo Senki 幼女戦記" on the full string and TMDB
+        # matches it. Asking TMDB first puts the same show on two cards under
+        # two providers, which is the split this module exists to close.
+        monkeypatch.setattr(enrich, "_anilist", lambda t: (
+            {**TANYA, "names": ["Youjo Senki"]} if t == "Youjo Senki" else None
+        ))
+        monkeypatch.setattr(enrich, "_tmdb", lambda *a: {"provider": "tmdb"})
+        assert enrich.lookup("anime", "Youjo Senki 幼女戦記", None)["provider"] == "anilist"
+
+
+class TestTheProvidersAreNotHammered:
+    def test_every_outbound_request_waits_its_turn(self, monkeypatch):
         # AniList allows 90 a minute and answers 429 for the rest of the minute
-        # once you pass it, so the pass that trips it resolves nothing.
+        # once you pass it, so the pass that trips it enriches nothing.
         import time
 
-        monkeypatch.setattr(resolve_mod, "_MIN_INTERVAL", 0.05)
-        monkeypatch.setattr(resolve_mod, "_last_call", 0.0)
-        monkeypatch.setattr(enrich, "lookup", fake_lookup([], {}))
+        monkeypatch.setattr(enrich, "_MIN_INTERVAL", 0.05)
+        monkeypatch.setattr(enrich, "_last_call", 0.0)
+        monkeypatch.setattr(enrich.urllib.request, "urlopen", _boom)
 
         started = time.monotonic()
-        for i in range(3):
-            resolve_mod.resolve(db_session, "anime", f"Title {i}", None)
+        for _ in range(3):
+            enrich._tvmaze("Anything")
         assert time.monotonic() - started >= 0.1
+
+
+def _boom(*a, **kw):
+    raise OSError("no network in tests")
 
 
 class TestRenamingACardMovesItsGroupingKey:
@@ -212,6 +246,29 @@ class TestRenamingACardMovesItsGroupingKey:
         assert work.display_title == "Saga of Tanya the Evil"
         assert work.normalised_title == "saga of tanya the evil"
         assert work.year == 2017
+
+
+class TestOnePassResolvesManyCards:
+    def test_a_merge_does_not_take_the_rest_of_the_pass_down_with_it(
+        self, db_session, monkeypatch
+    ):
+        # Hit on the live catalogue: the pass held instances of works that an
+        # earlier merge had deleted, and flushing one raised StaleDataError —
+        # 400 works in, and every work after it went unresolved.
+        monkeypatch.setattr(enrich, "lookup", fake_lookup([], {
+            "Youjo Senki 幼女戦記": TANYA,
+            "Saga of Tanya the Evil": TANYA,
+            "Frieren": {**TANYA, "provider_id": "154587", "display_title": "Frieren"},
+        }))
+        refresh(db_session, FakeProvider([[
+            result("[Sub] Youjo Senki 幼女戦記 - 01 [1080p]"),
+            result("[Sub] Saga of Tanya the Evil - 02 [1080p]"),
+            result("[Erai] Frieren - 08 [1080p]"),
+        ]]))
+        out = enrich.backfill(db_session)
+
+        assert out["found"] == 3
+        assert len(db_session.execute(select(CatalogWork)).scalars().all()) == 2
 
 
 class TestGhostWorks:
