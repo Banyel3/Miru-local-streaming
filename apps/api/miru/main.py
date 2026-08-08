@@ -11,6 +11,7 @@ from miru.acquisition.router import router as acquisition_router
 from miru.catalog import scheduler
 from miru.catalog.router import router as catalog_router
 from miru.library.router import router as library_router
+from miru.streaming.partial import router as live_router
 from miru.streaming.router import router as streaming_router
 from miru.streaming.subtitles import router as subtitles_router
 
@@ -42,6 +43,7 @@ app.include_router(acquisition_router)
 app.include_router(catalog_router)
 app.include_router(library_router)
 app.include_router(streaming_router)
+app.include_router(live_router)
 app.include_router(subtitles_router)
 
 

@@ -192,6 +192,61 @@ class QBittorrentProvider:
     def files(self, job_id: str) -> list[dict]:
         return _json("/torrents/files", {"hash": job_id.lower()})
 
+    def playable_prefix(self, job_id: str) -> dict:
+        """How much of the largest file is contiguously readable from byte zero.
+
+        This is what makes watch-while-downloading honest rather than hopeful.
+        Progress alone is not enough: 40% downloaded says nothing about *which*
+        40%, and with rarest-first piece order the first byte may be missing
+        while the last is present. Only a run of completed pieces starting at
+        piece zero is safe to serve.
+
+        qBittorrent reports piece state per torrent (0 = not downloaded,
+        1 = requested, 2 = downloaded), so the contiguous prefix is the count of
+        leading 2s times the piece length. Pieces are torrent-wide rather than
+        per-file, so for a multi-file torrent this is deliberately conservative:
+        it measures from the start of the torrent, not the start of the video.
+        """
+        h = job_id.lower()
+        rows = _json("/torrents/info", {"hashes": h})
+        if not rows:
+            raise AcquisitionError("qBittorrent has no such torrent")
+        t = rows[0]
+
+        files = _json("/torrents/files", {"hash": h}) or []
+        # The video is the biggest file. Samples, subtitles and NFOs are not.
+        biggest = max(files, key=lambda f: int(f.get("size") or 0), default=None)
+        if biggest is None:
+            raise AcquisitionError("That torrent has no files yet")
+
+        states = _json("/torrents/pieceStates", {"hash": h}) or []
+        props = _json("/torrents/properties", {"hash": h}) or {}
+        piece_len = int(props.get("piece_size") or 0)
+
+        ready = 0
+        for s in states:
+            if s != 2:
+                break
+            ready += 1
+
+        prefix_bytes = ready * piece_len
+        single = len(files) == 1
+
+        return {
+            "info_hash": h,
+            "name": t.get("name"),
+            "file": biggest.get("name"),
+            "size_bytes": int(biggest.get("size") or 0),
+            "save_path": t.get("save_path") or t.get("content_path") or "",
+            "content_path": t.get("content_path") or "",
+            "progress": float(t.get("progress") or 0.0),
+            # Conservative on purpose: for a multi-file torrent the prefix is
+            # measured from the start of the torrent rather than the start of
+            # the video, so it under-reports rather than over-promising.
+            "playable_bytes": prefix_bytes if single else min(prefix_bytes, int(biggest.get("size") or 0)),
+            "sequential": bool(t.get("seq_dl")),
+            "complete": float(t.get("progress") or 0.0) >= 1.0,
+        }
 
 # qBittorrent's vocabulary is wider than ours and leaks implementation detail
 # (three different flavours of "paused"). Translate rather than pass through.
