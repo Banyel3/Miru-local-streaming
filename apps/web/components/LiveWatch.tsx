@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { API_PUBLIC, fileSize } from "@/lib/api";
-import { liveStatus, makeWatchable } from "@/app/actions";
+import { downloadAction, liveStatus, makeWatchable } from "@/app/actions";
 import { Button, ButtonLink, ProgressBar, artTint } from "@/components/ui";
 
 type Status = Exclude<Awaited<ReturnType<typeof liveStatus>>, { error: string }>;
@@ -20,6 +20,9 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [stopped, setStopped] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -155,9 +158,62 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
               start.
             </p>
 
-            <Link href="/" className="mt-1 w-fit text-[12.5px] font-bold text-text-muted hover:text-text">
-              Back to browse
-            </Link>
+            {/* The controls live here rather than in the sidebar row. That row
+                has about 158px of usable width after the artwork, which is not
+                enough for two 44px targets — and a destructive action does not
+                belong in truncated text. */}
+            {stopped ? (
+              <p className="mt-1 text-[13px] font-bold text-text-dim">
+                Stopped. What had downloaded is still on the PC.
+              </p>
+            ) : confirming ? (
+              <div className="mt-1 flex flex-col gap-2.5 rounded-2xl border border-border bg-bg p-4">
+                <p className="text-[13px] font-bold">Stop downloading this?</p>
+                <p className="text-[12.5px] leading-relaxed text-text-muted">
+                  What has already downloaded is kept on the PC — you can start it again
+                  later. Nothing is deleted.
+                </p>
+                <div className="flex flex-wrap gap-2.5">
+                  <Button size="sm" onClick={() => setConfirming(false)}>
+                    Keep downloading
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      await downloadAction(infoHash, "cancel");
+                      setConfirming(false);
+                      setStopped(true);
+                    }}
+                  >
+                    Stop
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 flex flex-wrap items-center gap-2.5">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    const next = !paused;
+                    setPaused(next);
+                    await downloadAction(infoHash, next ? "pause" : "resume");
+                  }}
+                >
+                  {paused ? "Resume" : "Pause"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(true)}>
+                  Cancel
+                </Button>
+                <Link
+                  href="/"
+                  className="ml-1 text-[12.5px] font-bold text-text-muted hover:text-text"
+                >
+                  Back to browse
+                </Link>
+              </div>
+            )}
           </>
         )}
       </div>

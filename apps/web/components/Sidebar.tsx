@@ -172,11 +172,13 @@ function Downloading({ onNavigate }: { onNavigate?: () => void }) {
                 <span className="text-[10.5px] text-text-muted tabular-nums">
                   {d.state === "failed"
                     ? "Failed"
-                    : d.state === "done"
-                      ? "Adding to library…"
-                      : `${Math.round(d.progress * 100)}%${
-                          d.eta_seconds ? ` · ${clock(d.eta_seconds)} left` : ""
-                        }`}
+                    : d.state === "paused"
+                      ? `Paused · ${Math.round(d.progress * 100)}%`
+                      : d.state === "done"
+                        ? "Adding to library…"
+                        : `${Math.round(d.progress * 100)}%${
+                            d.eta_seconds ? ` · ${clock(d.eta_seconds)} left` : ""
+                          }`}
                 </span>
                 <ProgressBar percent={Math.round(d.progress * 100)} className="h-[3px]" />
               </span>

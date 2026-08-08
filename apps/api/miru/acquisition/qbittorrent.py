@@ -211,6 +211,17 @@ class QBittorrentProvider:
         # file the user may have already started watching.
         _call("/torrents/delete", {"hashes": job_id.lower(), "deleteFiles": "false"})
 
+    def set_paused(self, job_id: str, paused: bool) -> None:
+        """Pause or resume. qBittorrent renamed these endpoints in v5, so both
+        spellings are tried rather than pinning a version."""
+        h = job_id.lower()
+        primary = "/torrents/stop" if paused else "/torrents/start"
+        legacy = "/torrents/pause" if paused else "/torrents/resume"
+        try:
+            _call(primary, {"hashes": h})
+        except AcquisitionError:
+            _call(legacy, {"hashes": h})
+
     def make_sequential(self, job_id: str) -> None:
         """Turn a running download into a watchable one.
 
@@ -296,8 +307,8 @@ _STATES = {
     "downloading": "downloading",
     "metaDL": "queued",
     "forcedMetaDL": "queued",
-    "pausedDL": "queued",
-    "stoppedDL": "queued",
+    "pausedDL": "paused",
+    "stoppedDL": "paused",
     "queuedDL": "queued",
     "forcedDL": "downloading",
     "stalledDL": "downloading",

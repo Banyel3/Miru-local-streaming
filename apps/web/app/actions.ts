@@ -170,3 +170,23 @@ export async function startDownloadDirect(
     return { error: "Can't reach the API." };
   }
 }
+
+/** Pause, resume or stop a download. Cancel keeps the bytes already on disk. */
+export async function downloadAction(
+  jobId: string,
+  action: "pause" | "resume" | "cancel",
+): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/downloads/${jobId}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { error: body?.detail ?? `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}

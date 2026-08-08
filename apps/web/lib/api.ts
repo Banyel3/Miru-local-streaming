@@ -358,7 +358,7 @@ export type ActiveDownload = {
   work_id: number;
   title: string;
   job_id: string;
-  state: "queued" | "downloading" | "done" | "failed" | "cancelled";
+  state: "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled";
   progress: number;
   speed_bps?: number;
   eta_seconds?: number | null;

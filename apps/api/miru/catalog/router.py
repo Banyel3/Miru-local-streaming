@@ -302,6 +302,36 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     }
 
 
+def _link_by_filename(db: Session, work: CatalogWork) -> None:
+    """Point the card at the file the download actually produced.
+
+    Matched on the name the downloader wrote, not on the release title. Those
+    are different strings and matching them fuzzily does not work: a torrent
+    called "[Erai-raws] Honzuki no Gekokujou: Shisho ni Naru Tame ni wa Shudan
+    wo Erandeiraremasen" can contain a file called "[SubsPlease] Honzuki no
+    Gekokujou S4 - 17 (1080p) [E56B1187].mkv". The downloader knows the answer,
+    so ask it rather than guessing.
+    """
+    from miru.library.models import MediaFile
+
+    try:
+        info = downloader().playable_prefix(work.download_job_id)
+    except Exception:  # noqa: BLE001 — the scan will retry on its next pass
+        return
+
+    name = (info.get("file") or info.get("name") or "").rsplit("/", 1)[-1]
+    if not name:
+        return
+
+    row = db.execute(
+        select(MediaFile).where(MediaFile.path.like(f"%/{name}"))
+    ).scalar_one_or_none()
+    if row is not None:
+        work.library_file_id = row.id
+        db.commit()
+        log.info("linked %s to library file %s", work.display_title, row.id)
+
+
 _scan_lock = threading.Lock()
 _scan_thread: threading.Thread | None = None
 
@@ -367,6 +397,7 @@ def downloads(db: Session = Depends(get_db)):
         # downloads start one scan, not ten.
         if s.state == "done" and w.library_file_id is None:
             _request_scan()
+            _link_by_filename(db, w)
 
         out.append(
             {
@@ -407,3 +438,35 @@ def make_watchable(info_hash: str):
     except AcquisitionError as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"ok": True, "info_hash": info_hash}
+
+
+class DownloadAction(BaseModel):
+    action: str  # pause | resume | cancel
+
+
+@router.post("/downloads/{job_id}/action")
+def download_action(job_id: str, body: DownloadAction, db: Session = Depends(get_db)):
+    """Pause, resume or stop a download.
+
+    Cancel keeps the bytes. `deleteFiles=false` is not an oversight — a
+    part-downloaded file may be one the user is already watching, and stopping a
+    download is not a request to destroy it.
+    """
+    dl = downloader()
+    if body.action not in {"pause", "resume", "cancel"}:
+        raise HTTPException(422, "action must be pause, resume or cancel")
+
+    try:
+        if body.action == "cancel":
+            dl.cancel(job_id)
+            # The card must stop claiming a download that no longer exists.
+            for w in db.execute(
+                select(CatalogWork).where(CatalogWork.download_job_id == job_id)
+            ).scalars():
+                w.download_job_id = None
+            db.commit()
+        else:
+            dl.set_paused(job_id, body.action == "pause")
+    except AcquisitionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "action": body.action}

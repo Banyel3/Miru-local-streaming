@@ -141,8 +141,11 @@ class TestStatus:
             ("forcedDL", "downloading"),
             ("metaDL", "queued"),
             ("queuedDL", "queued"),
-            ("pausedDL", "queued"),
-            ("stoppedDL", "queued"),
+            # Paused is its own state, not "queued". Collapsing them meant a
+            # paused download rendered as queued with a stale ETA, so the pause
+            # button would have looked like it failed.
+            ("pausedDL", "paused"),
+            ("stoppedDL", "paused"),
             ("uploading", "done"),
             ("stalledUP", "done"),
             ("pausedUP", "done"),
