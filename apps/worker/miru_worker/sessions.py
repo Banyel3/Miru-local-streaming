@@ -56,13 +56,24 @@ def detect_encoder() -> str:
     if not shutil.which("ffmpeg"):
         return "libx264"
 
+    # 320x240 and a whole frame, deliberately. NVENC refuses very small
+    # dimensions and a fraction-of-a-second duration at 1 fps can encode zero
+    # frames, either of which makes a perfectly working GPU probe as failed —
+    # observed on a 5060 that encoded 1280x720 by hand without complaint.
     probe = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-         "-i", "testsrc=size=128x128:rate=1", "-t", "0.1",
+         "-i", "testsrc=size=320x240:rate=30", "-frames:v", "5",
          "-c:v", "h264_nvenc", "-f", "null", "-"],
         capture_output=True, timeout=60,
     )
-    return "h264_nvenc" if probe.returncode == 0 else "libx264"
+    if probe.returncode == 0:
+        return "h264_nvenc"
+
+    log.warning(
+        "NVENC probe failed, falling back to libx264. ffmpeg said: %s",
+        probe.stderr.decode("utf-8", "replace").strip()[-300:] or "(no output)",
+    )
+    return "libx264"
 
 
 ENCODER = detect_encoder()

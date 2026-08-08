@@ -206,8 +206,15 @@ curl -m 5 http://100.67.44.13:8010/health
 ```
 
 **Expect** `"encoder":"h264_nvenc"`. If it says `libx264`, the worker's own NVENC
-probe failed even though step 2 passed — recheck step 2 in the same shell the
-worker runs in.
+probe failed even though step 2 passed. The worker logs ffmpeg's error when that
+happens — read it before guessing. To force the encoder regardless:
+
+```bash
+echo "WORKER_ENCODER=h264_nvenc" >> ~/miru/apps/worker/.env
+```
+
+Setting it skips detection entirely, which is the right move on a machine you
+know has a working GPU.
 
 ---
 
