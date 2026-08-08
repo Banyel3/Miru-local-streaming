@@ -95,6 +95,13 @@ class CatalogWork(Base):
     backdrop_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     genres: Mapped[list] = mapped_column(JSONType, default=list)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # AniList's own word: TV | MOVIE | OVA | ONA | SPECIAL. This is what tells a
+    # film from a weekly show inside the anime rail — *One Piece Film: Red* is
+    # MOVIE, the series is TV — so the wall never needs a fifth filter pill.
+    format: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # What the provider says the whole run is, against the handful of episodes
+    # the catalogue actually holds. "8 of 1,172" is the honest line.
+    episode_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Denormalised so a rail is one indexed query rather than a join per row.
     best_seeder_pct: Mapped[float] = mapped_column(Float, default=0.0)
@@ -216,6 +223,37 @@ class CatalogRelease(Base):
     @property
     def grabbable(self) -> bool:
         return bool(self.magnet or self.download_url)
+
+
+class TitleResolution(Base):
+    """One parsed title, and the provider work it turned out to be.
+
+    Keyed on the normalised *parsed* title, so the cost is one lookup per
+    distinct name rather than one per release: 193 anime releases in the live
+    catalogue are well under a hundred names, asked once. New episodes of a
+    known show then cost nothing at all, which matters because AniList allows 90
+    requests a minute and a refresh must not sit waiting on it.
+
+    A row with no provider is a remembered *miss*. Without it the untraceable
+    releases — and there are always some — get asked about again every pass,
+    forever.
+    """
+
+    __tablename__ = "catalog_title_resolutions"
+    __table_args__ = (UniqueConstraint("kind", "query", name="uq_resolution_query"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    query: Mapped[str] = mapped_column(String(512))
+
+    provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The whole provider payload. A blob rather than columns because nothing
+    # queries it — it is read by primary key and copied onto the work — and a
+    # provider growing a field should not mean a migration.
+    data: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class CatalogRefresh(Base):

@@ -1,8 +1,8 @@
-"""Poster art and descriptions for catalog works.
+"""Who a work actually is: its provider identity, and the art that comes with it.
 
-Torrent indexers carry no artwork, and a wall of tinted rectangles is a list
-with extra whitespace. Three sources, chosen so the common cases need no
-configuration at all:
+Torrent indexers carry no artwork and no identity — a release name is a
+filename. Three sources, chosen so the common cases need no configuration at
+all:
 
 - **AniList** for anime. Free, no key, no registration, and its search tolerates
   the romaji/English/abbreviated titles that fall out of release names.
@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from miru.catalog.models import CatalogWork
@@ -61,6 +61,8 @@ def _anilist(title: str) -> dict | None:
     query ($s: String) {
       Media(search: $s, type: ANIME) {
         id
+        format
+        episodes
         title { romaji english }
         coverImage { extraLarge }
         bannerImage
@@ -91,6 +93,10 @@ def _anilist(title: str) -> dict | None:
         "score": (m["averageScore"] / 10) if m.get("averageScore") else None,
         "genres": m.get("genres") or [],
         "year": (m.get("startDate") or {}).get("year"),
+        # TV | MOVIE | OVA | ONA | SPECIAL. The anime rail tells a film from a
+        # weekly show with this rather than with another filter pill.
+        "format": m.get("format"),
+        "episode_count": m.get("episodes"),
     }
 
 
@@ -116,6 +122,8 @@ def _tvmaze(title: str) -> dict | None:
         "score": (show.get("rating") or {}).get("average"),
         "genres": show.get("genres") or [],
         "year": int(premiered[:4]) if premiered[:4].isdigit() else None,
+        "format": "TV",
+        "episode_count": None,
     }
 
 
@@ -153,6 +161,8 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
         "score": r.get("vote_average"),
         "genres": [],
         "year": int(date[:4]) if date[:4].isdigit() else None,
+        "format": "MOVIE" if kind == "movie" else "TV",
+        "episode_count": None,
     }
 
 
@@ -195,56 +205,60 @@ def _merge_into(db: Session, loser: CatalogWork, winner: CatalogWork) -> None:
 
 
 def enrich_work(db: Session, work: CatalogWork) -> bool:
-    """Fill one work's art. Returns True if anything was found."""
-    data = lookup(work.kind, work.display_title, work.year)
-    if not data or not data.get("poster_url"):
+    """Resolve one work to a provider and fill it in. True if one was found.
+
+    This is where a card gets its real identity, not just its poster. Two works
+    that resolve to the same provider id are one show under two names, and the
+    merge is the whole point of the pass rather than a side effect of it.
+    """
+    from miru.catalog.parse import normalised
+    from miru.catalog.resolve import apply, resolve, work_by_provider
+
+    data = resolve(db, work.kind, work.display_title, work.year)
+    if not data:
         # Marked as attempted so the backfill does not ask about the same
         # untraceable release every half hour forever.
         work.provider = work.provider or "none"
         return False
 
-    work.provider = data["provider"]
-    work.provider_id = data["provider_id"]
-    work.poster_url = data["poster_url"]
-    work.backdrop_url = data.get("backdrop_url")
-    work.overview = data.get("overview")
-    work.score = data.get("score")
-    work.genres = data.get("genres") or []
-    # The indexer's parsed title is a filename; the metadata source's is the
-    # name of the thing. Prefer the latter now that we have it.
-    if data.get("display_title"):
-        work.display_title = data["display_title"]
-    if data.get("year") and not work.year:
-        # Learning the year can collide with a work that already has it — the
-        # same film, once from a release that named the year and once from one
-        # that did not. That is a merge, not an error.
+    # The provider is the thing that knows *Youjo Senki* and *Saga of Tanya the
+    # Evil* are one show. If it already has a card, this work IS that card.
+    twin = work_by_provider(db, work.kind, data)
+    if twin is None:
+        # Taking the provider's title and year can also collide with a work that
+        # already holds them — the same film, once from a release that named the
+        # year and once from one that did not. That is a merge, not an error.
+        key = normalised(data.get("display_title") or work.display_title)
+        year = data.get("year") or work.year
         twin = db.execute(
             select(CatalogWork).where(
                 CatalogWork.kind == work.kind,
-                CatalogWork.normalised_title == work.normalised_title,
-                CatalogWork.year == data["year"],
+                CatalogWork.normalised_title == key,
+                CatalogWork.year.is_(None) if year is None else CatalogWork.year == year,
                 CatalogWork.id != work.id,
             )
         ).scalar_one_or_none()
-        if twin is not None:
-            _merge_into(db, work, twin)
-            return True
-        work.year = data["year"]
+
+    if twin is not None and twin.id != work.id:
+        _merge_into(db, work, twin)
+        return True
+
+    apply(work, data)
     return True
 
 
 def backfill(db: Session, limit: int = 40) -> dict:
-    """Fill art for works that have none yet.
+    """Resolve and fill the works nobody has asked a provider about yet.
 
     Bounded per pass on purpose. These are third-party APIs with rate limits
     (AniList allows 90 requests a minute), and the wall is usable without art,
-    so there is nothing to gain by hammering them.
+    so there is nothing to gain by hammering them. `provider` is the mark that
+    a work has been asked about — "none" included — so no work is asked twice.
     """
     pending = list(
         db.execute(
             select(CatalogWork)
-            .where(CatalogWork.poster_url.is_(None))
-            .where(or_(CatalogWork.provider.is_(None), CatalogWork.provider != "none"))
+            .where(CatalogWork.provider.is_(None))
             .order_by(CatalogWork.best_seeder_pct.desc())
             .limit(limit)
         ).scalars()
@@ -253,6 +267,9 @@ def backfill(db: Session, limit: int = 40) -> dict:
     found = 0
     for work in pending:
         title = work.display_title
+        # An earlier iteration may have folded this one into another card.
+        if db.get(CatalogWork, work.id) is None:
+            continue
         try:
             got = enrich_work(db, work)
             # Committed per work rather than per batch: a single constraint

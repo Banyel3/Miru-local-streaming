@@ -103,7 +103,14 @@ function languageLabel(code: string | null): string | null {
 export function subtitleTracks(file: MediaFile): SubtitleTrack[] {
   return (file.subtitle_streams ?? []).map((s, i) => {
     const styled = ["ass", "ssa"].includes((s.codec ?? "").toLowerCase());
-    const name = languageLabel(s.language) ?? (s as { title?: string }).title ?? `Track ${i + 1}`;
+    // The stream's own title is what separates two tracks of one language, and
+    // dropping it produced two entries both called "Portuguese" — which the
+    // player keys on, so it warned about duplicate keys and one of them was
+    // unreachable. A real file carries por/Brazil, por/Portugal, spa/Latin
+    // America and spa/Spain.
+    const title = (s as { title?: string | null }).title || null;
+    const lang = languageLabel(s.language);
+    const name = lang && title ? `${lang} (${title})` : (lang ?? title ?? `Track ${i + 1}`);
     const base = `${API_PUBLIC}/api/subtitles/${file.id}/${i}`;
     return {
       index: i,

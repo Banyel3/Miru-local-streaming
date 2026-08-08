@@ -24,6 +24,12 @@ TEXT_CODECS = {"subrip", "srt", "webvtt", "vtt", "mov_text", "text"}
 
 SIDECAR_EXTENSIONS = {".ass", ".ssa", ".srt", ".vtt"}
 
+# ffmpeg's encoder names are not the file extensions. Passing the extension
+# straight through asked for "-c:s vtt", which ffmpeg answers with
+# "Unknown encoder 'vtt'" — so every subtitle request 422'd and captions never
+# worked anywhere in the app.
+_ENCODERS = {"vtt": "webvtt", "ass": "ass", "ssa": "ass", "srt": "srt"}
+
 
 class SubtitleError(RuntimeError):
     pass
@@ -56,7 +62,8 @@ def extract_embedded(source: Path, stream_index: int, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     _run(
         ["ffmpeg", "-y", "-v", "error", "-i", str(source),
-         "-map", f"0:{stream_index}", "-c:s", dest.suffix.lstrip("."), str(dest)]
+         "-map", f"0:{stream_index}", "-c:s", _ENCODERS.get(dest.suffix.lstrip("."), dest.suffix.lstrip(".")),
+         str(dest)]
     )
     if not dest.exists() or dest.stat().st_size == 0:
         raise SubtitleError(f"stream {stream_index} produced no subtitle output")

@@ -18,6 +18,7 @@ from miru.catalog.classify import classify
 from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
 from miru.catalog.parse import normalised, parse, predict_strategy
 from miru.catalog.rank import Candidate, seeder_percentiles
+from miru.catalog.resolve import apply, cached, work_by_provider
 from miru.core.config import settings
 
 log = logging.getLogger(__name__)
@@ -41,11 +42,27 @@ def _published(raw: str | None) -> datetime | None:
 def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWork:
     """Find or create the work a release belongs to.
 
-    Grouping key is kind plus normalised title plus year. When the year is
-    absent it stays absent rather than being guessed: merging a yearless release
-    into a dated work can attach the wrong film's releases to a card, and
-    splitting only shows the same title twice.
+    The key is the metadata provider's id whenever this title has already been
+    resolved to one — that is what makes *Youjo Senki* and *Saga of Tanya the
+    Evil* one card. Resolution is read from the cache and never fetched here: a
+    refresh pass must not stall behind a rate-limited API, so unknown titles
+    fall back to the title grouping and are resolved by the enrichment pass that
+    runs straight after.
+
+    Without a provider the key is kind plus normalised title plus year, and when
+    the year is absent it stays absent rather than being guessed: merging a
+    yearless release into a dated work can attach the wrong film's releases to a
+    card, and splitting only shows the same title twice.
     """
+    data = cached(db, kind, title)
+    if data:
+        work = work_by_provider(db, kind, data)
+        if work is not None:
+            work.last_seen_at = _now()
+            return work
+        title = data.get("display_title") or title
+        year = data.get("year") or year
+
     key = normalised(title)
     work = db.execute(
         select(CatalogWork).where(
@@ -63,6 +80,13 @@ def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWo
         db.flush()
     else:
         work.last_seen_at = _now()
+
+    # An existing card under the provider's own title, seen before it was
+    # resolved. Claiming it is the merge, and it also keeps the identity
+    # constraint from being violated by a second row with the same name.
+    if data and not work.provider:
+        apply(work, data)
+        db.flush()
     return work
 
 
@@ -124,10 +148,17 @@ def _restate_works(db: Session) -> None:
     release dropping out has to lower its work's standing too, and incremental
     maxima only ever go up.
     """
-    for work in db.execute(select(CatalogWork)).scalars():
+    for work in db.execute(select(CatalogWork)).scalars().all():
         releases = db.execute(
             select(CatalogRelease).where(CatalogRelease.work_id == work.id)
         ).scalars().all()
+        # A work whose releases all moved elsewhere is a ghost: invisible on the
+        # wall (rails filter on release_count) but still holding the unique key
+        # the card that absorbed them needs. Deleted rather than left behind —
+        # `JUJUTSU KAISEN [0]` beside `Jujutsu Kaisen [2]` was one of 21 of them.
+        if not releases and not work.library_file_id and not work.download_job_id:
+            db.delete(work)
+            continue
         live = [r for r in releases if not r.stale and r.grabbable]
         work.release_count = len(releases)
         work.best_seeder_pct = max((r.seeder_pct for r in live), default=0.0)

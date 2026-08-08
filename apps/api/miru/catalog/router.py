@@ -81,6 +81,13 @@ def _work_json(w: CatalogWork) -> dict:
         "kind": w.kind,
         "title": w.display_title,
         "year": w.year,
+        # TV | MOVIE | OVA | ONA | SPECIAL, from the provider. How a film is
+        # told from a weekly show inside the anime rail, instead of a fifth
+        # filter pill that would not fit at 375px anyway.
+        "format": w.format,
+        # The provider's episode count against the releases actually held: the
+        # honest "8 of 1,172" rather than 1,164 dead rows.
+        "episode_count": w.episode_count,
         # Our own path, not the provider's. The browser makes no third-party
         # requests, and a miss 404s so the client can fall back to ArtTile.
         "poster_url": f"/api/posters/{w.id}" if w.poster_url else None,
