@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { endedForReal, resumeSrc } from "./live";
+import { canPlayNow, endedForReal, resumeSrc, streamState } from "./live";
 
 const done = { complete: true, playable_bytes: 100, size_bytes: 100 };
 const growing = { complete: false, playable_bytes: 30, size_bytes: 100 };
@@ -66,5 +66,43 @@ describe("picking the stream back up where it stopped", () => {
   it("leaves a query the API already put there alone", () => {
     const url = new URL(resumeSrc("http://api/api/stream/live/abc?t=9", 1));
     expect(url.searchParams.get("t")).toBe("9");
+  });
+});
+
+describe("waiting for the stream to actually be servable", () => {
+  it("does not call the video ready just because enough bytes exist", () => {
+    // `watchable` says the SOURCE has enough. It says nothing about whether the
+    // thing the player will be handed can be served yet — an MKV has to be
+    // remuxed first. Treating watchable as ready is what put a spinner on a
+    // black player forever: the overlay vanished, the player owned the screen,
+    // and the 503 underneath it was invisible.
+    expect(canPlayNow({ watchable: true, streamReady: false })).toBe(false);
+  });
+
+  it("is ready once the stream itself answers", () => {
+    expect(canPlayNow({ watchable: true, streamReady: true })).toBe(true);
+  });
+
+  it("is never ready before there are bytes, however the stream answers", () => {
+    expect(canPlayNow({ watchable: false, streamReady: true })).toBe(false);
+  });
+
+  it("treats a 503 as come-back-later, not as an error", () => {
+    // The remux is being made. The overlay should keep waiting and say so.
+    expect(streamState(503)).toBe("waiting");
+  });
+
+  it("treats a 206 as playable", () => {
+    expect(streamState(206)).toBe("ready");
+  });
+
+  it("treats a 416 as nothing-yet rather than broken", () => {
+    // Seeking past what has arrived on a file that is still growing.
+    expect(streamState(416)).toBe("waiting");
+  });
+
+  it("treats a 502 as a real failure worth telling the user about", () => {
+    // The remux failed. Waiting forever would be a lie.
+    expect(streamState(502)).toBe("failed");
   });
 });

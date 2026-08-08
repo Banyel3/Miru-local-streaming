@@ -17,12 +17,25 @@ from miru.streaming.router import router as streaming_router
 from miru.streaming.subtitles import router as subtitles_router
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_all()
     scheduler.start()
+
+    # Half-written remuxes from a killed process or a previous run. They are
+    # full-size, so leaving them costs real disk — 4.8 GB had accumulated when
+    # the per-request remux loop was found.
+    try:
+        from miru.streaming import remux
+
+        if n := remux.reap():
+            log.info("reaped %d abandoned remux part-files", n)
+    except Exception:  # noqa: BLE001 — startup must not fail on housekeeping
+        log.exception("could not reap remux cache")
+
     try:
         yield
     finally:

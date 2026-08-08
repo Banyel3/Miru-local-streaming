@@ -42,18 +42,24 @@ class TestAGrowingFileIsRemuxedWithoutItsTail:
 
 
 class TestTheCacheKnowsHowMuchWasThere:
-    def test_a_longer_prefix_is_not_served_the_shorter_remux(self, tmp_path):
-        """The failure this key exists to prevent.
+    def test_the_key_does_not_move_as_the_download_grows(self, tmp_path):
+        """Reversed deliberately. This test used to assert the opposite.
 
-        A growing file keeps its name and its inode. Keyed only on those, the
-        remux of the first 200 MB would be served for the rest of the download
-        and the video would stop at that point forever.
+        It required a longer prefix to get a different cache entry, so that a
+        200 MB remux could not be served for the rest of a download. The concern
+        was right and the mechanism was wrong: on a growing file the prefix
+        changes every second, so every request missed, every miss started
+        another gigabyte-scale ffmpeg, and the video never played at all.
+
+        The stale-ceiling worry is answered by the output growing instead — one
+        remux, followed, and the reader takes however much of it exists. See
+        test_live_remux_follows.py.
         """
         src = tmp_path / "a.mkv"
         src.write_bytes(b"x" * 100)
-        short = remux.cached_path(1, src, prefix_bytes=100)
-        longer = remux.cached_path(1, src, prefix_bytes=900)
-        assert short != longer
+        assert remux.cached_path(1, src, prefix_bytes=100) == remux.cached_path(
+            1, src, prefix_bytes=900
+        )
 
     def test_the_same_prefix_hits_the_same_file(self, tmp_path):
         src = tmp_path / "a.mkv"

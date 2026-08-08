@@ -118,6 +118,10 @@ export async function liveStatus(infoHash: string): Promise<
       found_on_disk: boolean;
       min_bytes: number;
       sequential: boolean;
+      /** Set once the download finished and the scan linked it. The watch page
+       *  follows this rather than 404ing on a stream that has correctly moved
+       *  out of incoming. */
+      library_file_id: number | null;
     }
   | { error: string }
 > {

@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { API_PUBLIC, fileSize } from "@/lib/api";
-import { endedForReal, resumeSrc } from "@/lib/live";
+import { canPlayNow, endedForReal, resumeSrc, streamState } from "@/lib/live";
 import { downloadAction, liveStatus, makeWatchable } from "@/app/actions";
 import { Player } from "@/app/watch/[id]/Player";
 import { Button, ButtonLink, ProgressBar } from "@/components/ui";
@@ -25,7 +26,15 @@ const mb = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 export function LiveWatch({ infoHash }: { infoHash: string }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Two separate facts. `watchable` is whether the SOURCE has enough bytes;
+  // `streamReady` is whether the thing the player gets can actually be served
+  // yet — an MKV is remuxed first, and that takes time after the bytes exist.
+  // Conflating them put a spinner on a black player forever: the overlay went
+  // away, the player took the screen, and the 503 underneath had nowhere to
+  // show. See lib/live.ts.
   const [ready, setReady] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const [remuxFailed, setRemuxFailed] = useState<string | null>(null);
   const [bps, setBps] = useState(0);
   const [paused, setPaused] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -35,6 +44,7 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
   // for the pieces that have landed since — see lib/live.ts.
   const [resume, setResume] = useState(0);
   const sample = useRef<{ bytes: number; at: number } | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     let live = true;
@@ -48,9 +58,39 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
       } else {
         setError(null);
         setStatus(res);
+
+        // The download finished and the mover took it out of incoming, so the
+        // live stream no longer has it — which is correct, and used to mean a
+        // 404 at the exact moment the film became fully watchable. Follow it
+        // to the library copy instead.
+        if (res.complete && res.library_file_id) {
+          router.replace(`/watch/${res.library_file_id}`);
+          return;
+        }
         // Start on its own. That is the whole promise of the button. Sticky:
         // a prefix that momentarily reports short must not tear the player out.
         if (res.watchable) setReady(true);
+
+        // Ask the stream itself, rather than assuming the bytes are enough.
+        if (res.watchable && !streamReady) {
+          try {
+            const probe = await fetch(`${API_PUBLIC}/api/stream/live/${infoHash}`, {
+              headers: { Range: "bytes=0-1" },
+              cache: "no-store",
+            });
+            const what = streamState(probe.status);
+            if (!live) return;
+            if (what === "ready") setStreamReady(true);
+            if (what === "failed") {
+              setRemuxFailed(
+                "This file could not be made playable in a browser. The download keeps going.",
+              );
+            }
+          } catch {
+            // A probe that cannot be made is not a verdict — the next poll asks
+            // again rather than declaring the file broken.
+          }
+        }
 
         // Rate of the *front* of the file, not of the download as a whole —
         // that is what decides when this starts playing.
@@ -61,9 +101,11 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
         }
         sample.current = { bytes: res.playable_bytes, at: now };
       }
-      // Slow down once it is playing: the poll is then only keeping the
-      // scrubbable ceiling honest, not deciding whether to start.
-      timer = setTimeout(tick, ready ? 5000 : 1500);
+      // Slow down once it is actually playing: the poll is then only keeping
+      // the scrubbable ceiling honest, not deciding whether to start. While a
+      // remux is being written it stays quick, because that is the wait the
+      // user is looking at.
+      timer = setTimeout(tick, streamReady ? 5000 : 1500);
     };
 
     tick();
@@ -71,7 +113,7 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
       live = false;
       clearTimeout(timer);
     };
-  }, [infoHash, ready]);
+  }, [infoHash, ready, streamReady]);
 
   const pct = Math.round((status?.progress ?? 0) * 100);
   const readyPct = status?.size_bytes
@@ -82,7 +124,8 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
     : 0;
   const title = status?.name ?? "Your download";
   const base = `${API_PUBLIC}/api/stream/live/${infoHash}`;
-  const src = ready && !error ? (resume ? resumeSrc(base, resume) : base) : null;
+  const playable = canPlayNow({ watchable: ready, streamReady });
+  const src = playable && !error ? (resume ? resumeSrc(base, resume) : base) : null;
   // The API serves the file as it is; only the container decides the provider.
   const mime = status?.file?.toLowerCase().endsWith(".webm") ? "video/webm" : "video/mp4";
 
@@ -102,13 +145,15 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
         {/* Inside the frame, over the poster. Cross-fades out; nothing moves. */}
         <div
           className={`absolute inset-0 z-(--z-player-chrome) flex flex-col justify-end gap-2.5 bg-gradient-to-t from-bg-deep/95 via-bg-deep/45 to-transparent p-5 transition-opacity duration-700 sm:p-7 ${
-            ready && !error ? "pointer-events-none opacity-0" : "opacity-100"
+            playable && !error ? "pointer-events-none opacity-0" : "opacity-100"
           }`}
         >
-          {error ? (
+          {error || remuxFailed ? (
             <>
               <p className="text-[13px] font-extrabold text-accent">Can&apos;t play this</p>
-              <p className="max-w-[60ch] text-[12.5px] leading-relaxed text-text-dim">{error}</p>
+              <p className="max-w-[60ch] text-[12.5px] leading-relaxed text-text-dim">
+                {error ?? remuxFailed}
+              </p>
               <ButtonLink href="/" variant="secondary" size="sm" className="mt-1 w-fit">
                 Back to browse
               </ButtonLink>
@@ -124,7 +169,9 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
               <p className="max-w-[60ch] text-[12px] text-text-muted">
                 {status && !status.found_on_disk
                   ? "Waiting for the first pieces to land."
-                  : "Playing starts on its own. You can close this page — it keeps going."}
+                  : ready && !streamReady
+                    ? "Getting it ready to play in your browser — this takes a moment."
+                    : "Playing starts on its own. You can close this page — it keeps going."}
               </p>
             </>
           )}

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import time
 import logging
 import shutil
 import subprocess
@@ -51,18 +52,22 @@ def cached_path(file_id: int, source: Path, prefix_bytes: int | None = None) -> 
     Keyed on size and mtime as well as the id, so replacing a file on disk with
     a different one under the same name cannot serve the old remux forever.
 
-    `prefix_bytes` is how much of a still-downloading file was readable when
-    this copy was made, and it is part of the key. A growing file keeps its name
-    and its inode, so without it the remux of the first 200 MB would be served
-    for the rest of the download and the video would stop there forever.
+    `prefix_bytes` is accepted and deliberately ignored. It used to be part of
+    the key, on the reasoning that a longer prefix must not be served the
+    shorter remux — and on a growing file that made every request a different
+    key, so every request missed, every miss started a fresh gigabyte-scale
+    ffmpeg, and the remux that finished was keyed to a prefix that had already
+    moved on. Measured live: six requests, six 503s, a complete 1.34 GB remux on
+    disk unserved, and a second ffmpeg redoing it.
+
+    The output grows instead. One file, one identity, one job — and the caller
+    reads however much of it exists.
     """
     try:
         stat = source.stat()
         stamp = f"{stat.st_size}-{int(stat.st_mtime)}"
     except OSError:
         stamp = "0-0"
-    if prefix_bytes is not None:
-        stamp = f"{stamp}@{prefix_bytes}"
     digest = hashlib.sha256(f"{file_id}:{stamp}".encode()).hexdigest()[:20]
     return cache_dir() / f"{digest}.mp4"
 
@@ -114,6 +119,44 @@ def read_prefix(source: Path, limit: int, chunk: int = 1 << 20):
             yield block
 
 
+def follow(source: Path, ceiling, alive, chunk: int = 1 << 20, poll: float = 1.0):
+    """The source's bytes as they arrive, never past the completed prefix.
+
+    One ffmpeg is fed this for the life of a download, rather than one started
+    per request over a prefix that had grown. `ceiling()` is asked again on each
+    pass because the answer changes as pieces land, and it is a callable rather
+    than a number for exactly that reason.
+
+    Reading past the ceiling is the thing this exists to prevent: a sequential
+    torrent file is full size from the start with a hole in the middle — Watch
+    Now asks for firstLastPiecePrio, so the last piece arrives almost
+    immediately — and a hole reads as zeros, which decode as corruption rather
+    than as an error anyone can see.
+
+    `alive()` ends it. Without that the generator blocks forever on a cancelled
+    or stalled download and holds an ffmpeg per abandoned session.
+    """
+    sent = 0
+    with source.open("rb") as fh:
+        while True:
+            available = max(0, ceiling() - sent)
+            if available <= 0:
+                if not alive():
+                    return
+                time.sleep(poll)
+                continue
+            block = fh.read(min(chunk, available))
+            if not block:
+                # The filesystem has not caught up with the piece report. They
+                # are two machines' opinions and the smaller one is the safe one.
+                if not alive():
+                    return
+                time.sleep(poll)
+                continue
+            sent += len(block)
+            yield block
+
+
 def state(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
     """`ready` | `working` | `failed` | `absent`."""
     if cached_path(file_id, source, prefix_bytes).exists():
@@ -127,14 +170,47 @@ def state(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
     return "absent"
 
 
-def _key(file_id: int, prefix_bytes: int | None) -> object:
-    """What counts as "the same job".
+def _key(file_id: int, prefix_bytes: int | None = None) -> object:
+    """What counts as "the same job". One per file.
 
-    Per prefix, not per file. A growing file is remuxed again at each new
-    prefix, and sharing one key would report the earlier, shorter job as this
-    one's and never start the longer.
+    It was once per (file, prefix), which meant a second ffmpeg could start on
+    the same source while the first was still running — and on a growing file
+    that happened on every poll.
     """
-    return file_id if prefix_bytes is None else (file_id, prefix_bytes)
+    return file_id
+
+
+# Outputs currently being written. Reaped `.part` files are the wreckage of the
+# runaway loop above; the one a live remux is writing must not be swept with it.
+_active_parts: set[Path] = set()
+
+
+def reap() -> int:
+    """Delete half-written outputs nothing is working on. Returns how many.
+
+    A `.part` file is a remux that died — the process was killed, the API
+    restarted, or the loop that used to start one per request moved on. They are
+    full-size, so leaving them costs real disk: 4.8 GB had accumulated when this
+    was found.
+    """
+    gone = 0
+    with _lock:
+        live = set(_active_parts)
+    for part in cache_dir().glob("*.part.mp4"):
+        if part in live:
+            continue
+        try:
+            part.unlink()
+            gone += 1
+        except OSError:  # noqa: PERF203 — one undeletable file must not stop the rest
+            log.warning("could not reap %s", part.name)
+    return gone
+
+
+def forget(file_id: int) -> None:
+    """Drop a recorded failure so this file may be attempted again."""
+    with _lock:
+        _failed.pop(_key(file_id), None)
 
 
 def error(file_id: int, prefix_bytes: int | None = None) -> str | None:
@@ -147,18 +223,21 @@ def _run(
     source: Path,
     dest: Path,
     fragmented: bool = False,
-    limit_bytes: int | None = None,
+    limit_bytes=None,
+    alive=None,
 ) -> None:
     # Written to a temporary name and renamed, so a half-written file is never
     # served as a complete one — the same discipline as the poster cache.
     tmp = dest.with_suffix(".part.mp4")
+    with _lock:
+        _active_parts.add(tmp)
     cmd = command(source, tmp, fragmented=fragmented, limit_bytes=limit_bytes)
     try:
         if limit_bytes is None:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
             code, err = proc.returncode, proc.stderr or ""
         else:
-            code, err = _feed(cmd, source, limit_bytes)
+            code, err = _feed(cmd, source, limit_bytes, alive)
         if code != 0 or not tmp.exists():
             tail = err.strip().splitlines()
             raise RuntimeError(tail[-1] if tail else f"ffmpeg exited {code}")
@@ -171,13 +250,26 @@ def _run(
         with _lock:
             _failed[file_id] = str(exc)[:200]
         log.warning("remux failed for %s: %s", source.name, exc)
+    finally:
+        with _lock:
+            _active_parts.discard(tmp)
 
 
-def _feed(cmd: list[str], source: Path, limit: int) -> tuple[int, str]:
-    """Run ffmpeg with the prefix on its stdin."""
+def _feed(cmd: list[str], source: Path, limit, alive=None) -> tuple[int, str]:
+    """Run ffmpeg with the source's bytes on its stdin.
+
+    `limit` is either a byte count — a fixed prefix, used by the tests — or a
+    callable giving the ceiling as it moves, which is how a live download is
+    followed by one process instead of one per request.
+    """
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    feed = (
+        follow(source, limit, alive or (lambda: True))
+        if callable(limit)
+        else read_prefix(source, limit)
+    )
     try:
-        for block in read_prefix(source, limit):
+        for block in feed:
             proc.stdin.write(block)
     except BrokenPipeError:
         # ffmpeg gave up early — its own stderr says why, and that is the
@@ -190,7 +282,7 @@ def _feed(cmd: list[str], source: Path, limit: int) -> tuple[int, str]:
     return proc.wait(timeout=1800), err
 
 
-def ensure(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
+def ensure(file_id: int, source: Path, prefix_bytes=None, alive=None) -> str:
     """Start a remux if one is needed. Returns the state after asking.
 
     `prefix_bytes` marks this as a still-downloading file: the output is
@@ -206,6 +298,12 @@ def ensure(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
     current = state(file_id, source, prefix_bytes)
     if current in ("ready", "working"):
         return current
+    if current == "failed":
+        # Not retried here. A source ffmpeg cannot read fails the same way every
+        # time, and the player polls — so retrying on each request is the same
+        # runaway that keying on the prefix produced. Cleared by `forget()` when
+        # something has actually changed.
+        return "failed"
 
     dest = cached_path(file_id, source, prefix_bytes)
     with _lock:
@@ -217,7 +315,7 @@ def ensure(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
         _failed.pop(key, None)
         t = threading.Thread(
             target=_run,
-            args=(key, source, dest, prefix_bytes is not None, prefix_bytes),
+            args=(key, source, dest, prefix_bytes is not None, prefix_bytes, alive),
             daemon=True,
         )
         _running[key] = t

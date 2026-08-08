@@ -22,13 +22,17 @@ import logging
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from fastapi.responses import StreamingResponse
 
 from miru.acquisition.downloader import downloader, supports_streaming
 from miru.streaming import remux
 from miru.acquisition.provider import AcquisitionError
+from miru.catalog.models import CatalogWork
 from miru.core.config import settings
+from miru.core.db import get_db
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stream/live", tags=["streaming"])
@@ -60,6 +64,31 @@ def info_hash_key(info_hash: str) -> int:
     which inside a route is a 500 with a stack trace instead of an answer.
     """
     return int.from_bytes(hashlib.sha1(info_hash.encode()).digest()[:6], "big")
+
+
+def _ceiling_now(info_hash: str, path: Path) -> int:
+    """How much of the source is readable, asked again as the download runs."""
+    try:
+        p = downloader().playable_prefix(info_hash)
+    except AcquisitionError:
+        return 0
+    on_disk = path.stat().st_size if path.exists() else 0
+    if p.get("complete"):
+        return on_disk
+    return max(0, min(int(p.get("playable_bytes") or 0), on_disk))
+
+
+def _still_downloading(info_hash: str) -> bool:
+    """Whether there is any point waiting for more bytes.
+
+    A cancelled or finished torrent must end the follow, or its ffmpeg lives on
+    with nothing to read.
+    """
+    try:
+        p = downloader().playable_prefix(info_hash)
+    except AcquisitionError:
+        return False
+    return not p.get("complete")
 
 
 def needs_remux(path: Path) -> bool:
@@ -110,7 +139,7 @@ def _local_path(prefix: dict) -> Path | None:
 
 
 @router.get("/{info_hash}/status")
-def live_status(info_hash: str):
+def live_status(info_hash: str, db: Session = Depends(get_db)):
     """Whether this can be watched yet, and how much of it."""
     if not supports_streaming():
         raise HTTPException(
@@ -131,7 +160,21 @@ def live_status(info_hash: str):
         # Enough to start, rather than merely non-zero.
         "watchable": bool(path) and (prefix["complete"] or ready >= MIN_PLAYABLE_BYTES),
         "min_bytes": MIN_PLAYABLE_BYTES,
+        # Where this went once it finished. The mover takes a completed download
+        # out of incoming, so the live stream stops having it and the page 404s
+        # — at the exact moment the film became fully watchable. This is what the
+        # page follows instead of showing an error.
+        "library_file_id": _promoted_to(db, info_hash),
     }
+
+
+def _promoted_to(db: Session, info_hash: str) -> int | None:
+    """The library file this download became, once the scan has linked it."""
+    return db.execute(
+        select(CatalogWork.library_file_id).where(
+            CatalogWork.download_job_id == info_hash
+        )
+    ).scalar_one_or_none()
 
 
 @router.get("/{info_hash}")
@@ -167,13 +210,21 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
         # Keyed on the ceiling, so each time the player runs out and asks again
         # — see lib/live.ts and the `?resume=` it appends — it gets a longer
         # copy rather than the same short one for the rest of the download.
-        made = remux.ensure(info_hash_key(info_hash), path, prefix_bytes=ceiling)
+        # Followed rather than remade. `prefix_bytes` is a callable so the one
+        # ffmpeg started here keeps reading as pieces land, and `alive` is what
+        # ends it — without that a cancelled download holds a process forever.
+        key = info_hash_key(info_hash)
+        made = remux.ensure(
+            key,
+            path,
+            prefix_bytes=lambda: _ceiling_now(info_hash, path),
+            alive=lambda: _still_downloading(info_hash),
+        )
         if made == "failed":
             raise HTTPException(
-                502, remux.error(info_hash_key(info_hash), ceiling)
-                or "Could not make this file playable."
+                502, remux.error(key) or "Could not make this file playable."
             )
-        playable = remux.cached_path(info_hash_key(info_hash), path, ceiling)
+        playable = remux.cached_path(key, path)
         if made != "ready" or not playable.exists():
             # "Not yet", not "never". The buffering overlay already knows how to
             # sit through a wait; zeros or a refused container would read to the
@@ -184,8 +235,11 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
                 headers={"Retry-After": "5"},
             )
         path = playable
-        # The remux is a whole, finished file: its own length is the ceiling,
-        # and there is nothing beyond it to protect the player from.
+        # The remux's own size, not the source's completed prefix. It is a
+        # different length — subtitles are dropped and the container changes —
+        # and it is still being written, so promising the source's ceiling would
+        # promise bytes this file does not have and the read would come up short
+        # under a Content-Length already sent.
         total = ceiling = path.stat().st_size
 
     start, end = 0, ceiling - 1

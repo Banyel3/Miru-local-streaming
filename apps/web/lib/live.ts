@@ -40,3 +40,36 @@ export function resumeSrc(src: string, attempt: number): string {
   url.searchParams.set("resume", String(attempt));
   return url.toString();
 }
+
+/**
+ * What the stream itself said when asked for its first bytes.
+ *
+ * `waiting` is the important one. A 503 means the remux that makes this file
+ * playable in a browser is still being written, and a 416 means the completed
+ * prefix has not reached the requested range yet — both are "come back", not
+ * "broken". Only a 5xx that is not 503 is a failure worth telling the user
+ * about, because the remux said it could not do it at all.
+ */
+export type StreamState = "ready" | "waiting" | "failed";
+
+export function streamState(status: number): StreamState {
+  if (status === 200 || status === 206) return "ready";
+  if (status === 503 || status === 416 || status === 425) return "waiting";
+  return "failed";
+}
+
+/**
+ * Whether to hand the player a source.
+ *
+ * Both halves, because they answer different questions. `watchable` says the
+ * SOURCE has enough bytes; it says nothing about whether the thing the player
+ * will actually be handed can be served — an MKV has to be remuxed first, and
+ * that takes time after the bytes exist.
+ *
+ * Treating `watchable` alone as ready is what left a spinner on a black player
+ * forever: the buffering overlay disappeared, the player owned the screen, and
+ * the 503 underneath it had nowhere to show.
+ */
+export function canPlayNow(s: { watchable: boolean; streamReady: boolean }): boolean {
+  return s.watchable && s.streamReady;
+}

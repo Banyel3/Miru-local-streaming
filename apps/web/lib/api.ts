@@ -395,6 +395,9 @@ export type WorkDetail = CatalogWork & {
   all_dead: boolean;
 };
 
+/** Where a finished live download ended up, once the scan has linked it. */
+export type LivePromotion = { library_file_id?: number | null };
+
 export type ActiveDownload = {
   /** null for a download no card points at — still running, still needs its
    *  controls, but it has no place on the wall. See /api/catalog/downloads. */
