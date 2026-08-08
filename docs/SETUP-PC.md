@@ -286,29 +286,74 @@ git clone https://github.com/Atuldubey98/movies-downloader ~/movies-downloader
 cd ~/movies-downloader && npm run build
 ```
 
-**Bind it to loopback only.** It ships with no authentication whatsoever, so
-anything that can reach it can queue downloads onto your disk. Miru talks to it
-from the same machine, so it never needs to listen on the tailnet:
+It is used for **search only**. It has no download-to-disk feature: its
+`/torrent/video` endpoint pipes bytes into an HTTP response and expects the
+*client* to save them, and `torrentStream()` is called with no options so its
+piece cache goes to `/tmp`. Downloading is aria2's job (step 6b).
+
+**It must be reachable from the laptop**, because Miru runs there and calls it.
+The isolation you want is that the untrusted code does not *live* on the
+always-on, publicly-tunnelled machine — not that it is unreachable.
 
 ```bash
-HOST=127.0.0.1 PORT=5000 npm start
+PORT=5000 npm start
 ```
 
-**Check, from the PC:**
+**Check from the PC, then from the laptop:**
 
 ```bash
+# on the PC
 curl -m 10 "http://127.0.0.1:5000/api/v1/health"
-```
-
-**Check it is NOT reachable from the laptop** — this one matters:
-
-```bash
-# on the laptop; expect connection refused
+# on the laptop — this SHOULD work
 curl -m 5 http://100.67.44.13:5000/api/v1/health
 ```
 
-If that succeeds, it is listening on all interfaces. Fix the bind before going
-further.
+What must **not** be true is public exposure: no cloudflared tunnel, no router
+port-forward, nothing published beyond the tailnet. It ships with no
+authentication of any kind, so anything that can reach it can drive it.
+
+---
+
+## Step 6b — aria2, the actual downloader
+
+```bash
+sudo apt install -y aria2
+mkdir -p ~/.aria2
+openssl rand -hex 24 > ~/.aria2/rpc-secret && cat ~/.aria2/rpc-secret
+
+cat > ~/.aria2/aria2.conf <<EOF
+dir=/mnt/incoming
+continue=true
+enable-rpc=true
+rpc-listen-all=true
+rpc-listen-port=6800
+rpc-secret=PASTE_THE_SECRET_HERE
+seed-time=0
+# NFS does not handle pre-allocation well; without this large torrents stall
+# on start.
+file-allocation=none
+EOF
+
+aria2c --conf-path="$HOME/.aria2/aria2.conf"
+```
+
+Two settings are load-bearing. `continue=true` gives resume, so a 12 GB file
+survives a reboot instead of restarting. `seed-time=0` stops seeding once the
+download completes — change it if you want to keep seeding, but know that you
+are choosing to.
+
+aria2 writes a `.aria2` control file alongside each in-progress download and
+deletes it on completion. The library mover already treats `.aria2` as
+"unfinished no matter how still it looks", so an interrupted download can never
+be promoted.
+
+**Check from the laptop:**
+
+```bash
+curl -s -m 5 -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"1","method":"aria2.getVersion","params":["token:YOUR_SECRET"]}' \
+  http://100.67.44.13:6800/jsonrpc
+```
 
 ---
 
