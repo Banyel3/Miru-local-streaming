@@ -8,6 +8,8 @@ from miru.core.auth import require_token
 from miru.core.config import settings
 from miru.core.db import create_all
 from miru.acquisition.router import router as acquisition_router
+from miru.catalog import scheduler
+from miru.catalog.router import router as catalog_router
 from miru.library.router import router as library_router
 from miru.streaming.router import router as streaming_router
 from miru.streaming.subtitles import router as subtitles_router
@@ -18,7 +20,11 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_all()
-    yield
+    scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
 
 
 app = FastAPI(title="Miru", version="0.1.0", lifespan=lifespan,
@@ -33,6 +39,7 @@ app.add_middleware(
 )
 
 app.include_router(acquisition_router)
+app.include_router(catalog_router)
 app.include_router(library_router)
 app.include_router(streaming_router)
 app.include_router(subtitles_router)

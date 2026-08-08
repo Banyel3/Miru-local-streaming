@@ -60,6 +60,16 @@ def client(db_session, monkeypatch):
 
     monkeypatch.setattr(settings, "transcode_worker", "")
     monkeypatch.setattr(worker_mod, "_last_checked", 0.0)
+    # No background refresh in tests. A loop that wakes every thirty minutes is
+    # not something a test should have to reason about, and the ingest pass is
+    # tested directly.
+    monkeypatch.setattr(settings, "catalog_refresh_seconds", 0)
+    # The PC probe is cached across requests, so a stale True from another test
+    # would leak in. Force it unreachable unless a test says otherwise.
+    import miru.catalog.router as catalog_mod
+
+    monkeypatch.setattr(catalog_mod, "_pc_state", (0.0, False))
+    monkeypatch.setattr(settings, "aria2_url", "")
 
     app.dependency_overrides[get_db] = lambda: db_session
     with TestClient(app) as c:

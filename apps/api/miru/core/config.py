@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     prowlarr_url: str = ""
     prowlarr_api_key: str = ""
     aria2_url: str = ""
+    # How often to ask the indexers what exists. Zero disables the loop, which
+    # is what the test suite and CI run with.
+    catalog_refresh_seconds: int = 1800
     aria2_secret: str = ""
 
     # Transcode worker on the PC. Empty means no worker: files needing an
