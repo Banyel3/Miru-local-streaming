@@ -50,6 +50,11 @@ class SearchResult:
     # downloadUrl change between two calls three seconds apart — measured at
     # 299 of 299 results. Identity has to come from the swarm, not the proxy.
     info_hash: str | None = None
+    # When the indexer says the release was published. Present on every result
+    # measured, and the only field that answers "what is new" — first_seen_at
+    # only answers "when did Miru last look", which is the same instant for
+    # everything in a pass and therefore sorts as noise.
+    published_at: str | None = None
     categories: list[str] = field(default_factory=list)
     # Ids, not just names. Classification runs on these because the live
     # instance returns category objects carrying an id and no name at all

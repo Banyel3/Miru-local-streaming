@@ -66,6 +66,7 @@ class CatalogWork(Base):
         UniqueConstraint("kind", "normalised_title", "year", name="uq_work_identity"),
         Index("ix_works_kind_seeders", "kind", "best_seeder_pct"),
         Index("ix_works_kind_first_seen", "kind", "first_seen_at"),
+        Index("ix_works_kind_latest", "kind", "latest_release_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -88,6 +89,11 @@ class CatalogWork(Base):
     # Denormalised so a rail is one indexed query rather than a join per row.
     best_seeder_pct: Mapped[float] = mapped_column(Float, default=0.0)
     release_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Newest publication date among this work's releases. What "latest" means on
+    # the wall, and the reason the first rail is ordered rather than arbitrary.
+    latest_release_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Written at download time rather than derived. Deriving it needs both sides
     # normalised through the same parser, and until that exists the in-library
@@ -163,6 +169,13 @@ class CatalogRelease(Base):
     # August may be dead in November, and a wall that never deletes would
     # otherwise fill with links that fail on click.
     missed_refreshes: Mapped[int] = mapped_column(Integer, default=0)
+
+    # The indexer's own publication date. Distinct from first_seen_at, which is
+    # only when Miru last looked — identical for everything in a pass, so it
+    # sorts as noise rather than as recency.
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

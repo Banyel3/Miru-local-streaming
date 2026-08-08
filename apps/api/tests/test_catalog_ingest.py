@@ -222,3 +222,39 @@ class TestPredictedPlayback:
               db_session.execute(select(CatalogRelease)).scalars()}
         assert by["[Sub] Show - 01 [1080p][x265][10bit]"] == "transcode_full"
         assert by["[Sub] Other - 01 [1080p][x264]"] == "remux"
+
+
+class TestRecencyOrdering:
+    """The wall leads with what is newest, and "newest" is the indexer's own
+    publish date. first_seen_at is the same instant for everything ingested in
+    one pass, so ordering on it falls back to insertion order and reads as
+    shuffled — which is exactly how it looked."""
+
+    def test_the_publish_date_is_stored_not_discarded(self, db_session):
+        r = result("[Grp] Show - 01 [1080p]")
+        r.published_at = "2026-08-01T10:00:00Z"
+        refresh(db_session, FakeProvider([[r]]))
+        rel = db_session.execute(select(CatalogRelease)).scalar_one()
+        assert rel.published_at is not None
+        assert rel.published_at.year == 2026 and rel.published_at.month == 8
+
+    def test_a_work_takes_the_newest_date_among_its_releases(self, db_session):
+        old = result("[Grp] Show - 01 [1080p]", seeders=10)
+        new = result("[Grp] Show - 02 [1080p]", seeders=10)
+        old.published_at = "2026-01-01T00:00:00Z"
+        new.published_at = "2026-08-01T00:00:00Z"
+        refresh(db_session, FakeProvider([[old, new]]))
+        works = db_session.execute(select(CatalogWork)).scalars().all()
+        assert len(works) == 1
+        assert works[0].latest_release_at.month == 8
+
+    def test_an_unreadable_date_does_not_lose_the_release(self, db_session):
+        r = result("[Grp] Show - 01 [1080p]")
+        r.published_at = "not-a-date"
+        refresh(db_session, FakeProvider([[r]]))
+        rel = db_session.execute(select(CatalogRelease)).scalar_one()
+        assert rel.published_at is None
+        # It still falls back to something sortable rather than dropping out of
+        # the rail entirely.
+        work = db_session.execute(select(CatalogWork)).scalar_one()
+        assert work.latest_release_at is not None

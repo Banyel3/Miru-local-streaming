@@ -153,14 +153,20 @@ export function ReleaseSheet({
       aria-modal="true"
       aria-label={`Get ${work.title}`}
     >
+      {/* Ordering is relative to this container, not to the document.
+          The wrapper already carries --z-drawer, which is what puts the whole
+          dialog above the page; inside it these two only have to be ordered
+          against each other. Using --z-drawer-backdrop here put the blurred
+          backdrop *above* the sheet, which rendered as a blurred page with
+          nothing on it and nothing clickable. */}
       <button
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="absolute inset-0 z-(--z-drawer-backdrop) bg-bg-deep/70 backdrop-blur-sm"
+        className="absolute inset-0 z-0 bg-bg-deep/70 backdrop-blur-sm"
       />
 
-      <div className="relative flex max-h-[92dvh] w-full max-w-[560px] flex-col gap-3 overflow-y-auto rounded-t-3xl border border-border bg-surface p-5 sm:rounded-3xl motion-safe:animate-[miru-rise_.25s_var(--ease-out-quart)]">
+      <div className="relative z-10 flex max-h-[92dvh] w-full max-w-[560px] flex-col gap-3 overflow-y-auto rounded-t-3xl border border-border bg-surface p-5 sm:rounded-3xl motion-safe:animate-[miru-rise_.25s_var(--ease-out-quart)]">
         <header className="flex items-start gap-3">
           <div className="min-w-0">
             <h2 className="text-[17px] font-extrabold">

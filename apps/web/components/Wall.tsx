@@ -374,7 +374,7 @@ function Hero({
       <div className="relative flex flex-col justify-end gap-3.5 p-6 sm:max-w-[640px] sm:p-9">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-border-hover bg-bg/70 px-3 py-1.5 text-[11.5px] font-bold backdrop-blur-sm">
-            Trending now
+            Latest release
           </span>
           <span className="rounded-full border border-border-hover px-3 py-1.5 text-[11.5px] text-highlight capitalize">
             {work.kind}

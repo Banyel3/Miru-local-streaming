@@ -27,6 +27,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _published(raw: str | None) -> datetime | None:
+    """Parse the indexer's publish date. Never raises — a release with an
+    unreadable date is still a release."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWork:
     """Find or create the work a release belongs to.
 
@@ -89,12 +100,14 @@ def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool
                 imdb_id=r.imdb_id,
                 categories=list(r.categories or []),
                 predicted_strategy=predict_strategy(r.title),
+                published_at=_published(r.published_at),
             )
         )
         return True
 
     # Seen again: refresh the volatile fields and clear the staleness counter.
     existing.guid = r.magnet or r.download_url or r.id
+    existing.published_at = _published(r.published_at) or existing.published_at
     existing.seeders = int(r.seeders or 0)
     existing.leechers = int(r.leechers or 0)
     existing.seeder_pct = pct
@@ -118,6 +131,8 @@ def _restate_works(db: Session) -> None:
         live = [r for r in releases if not r.stale and r.grabbable]
         work.release_count = len(releases)
         work.best_seeder_pct = max((r.seeder_pct for r in live), default=0.0)
+        dates = [r.published_at for r in releases if r.published_at]
+        work.latest_release_at = max(dates) if dates else work.first_seen_at
 
 
 def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:

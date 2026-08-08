@@ -49,7 +49,7 @@ def filled(db_session):
 class TestTheWall:
     def test_one_request_returns_the_whole_screen(self, client, filled):
         b = client.get("/api/catalog").json()
-        assert {r["key"] for r in b["rails"]} == {"trending", "fresh"}
+        assert [r["key"] for r in b["rails"]] == ["latest", "trending"]
         assert b["empty"] is False
         assert b["refreshed_at"] is not None
 
@@ -94,8 +94,9 @@ class TestSparseRails:
 
     def test_a_full_row_renders_as_a_rail(self, client, filled):
         b = client.get("/api/catalog?kind=anime").json()
-        trending = next(r for r in b["rails"] if r["key"] == "trending")
-        assert trending["layout"] == "rail"
+        # The first rail gets first pick of the catalogue, so it is the one with
+        # enough to fill a rail; later rails see only what it left.
+        assert b["rails"][0]["layout"] == "rail"
 
     def test_a_thin_kind_explains_itself(self, client, filled):
         note = client.get("/api/catalog?kind=series").json()["note"]
@@ -107,11 +108,11 @@ class TestSparseRails:
 
 class TestPaging:
     def test_a_rail_pages_with_a_cursor_rather_than_an_offset(self, client, filled):
-        first = client.get("/api/catalog/rail/trending?kind=anime").json()
+        first = client.get("/api/catalog/rail/latest?kind=anime").json()
         assert first["items"]
         if first["next_cursor"]:
             second = client.get(
-                f"/api/catalog/rail/trending?kind=anime&cursor={first['next_cursor']}"
+                f"/api/catalog/rail/latest?kind=anime&cursor={first['next_cursor']}"
             ).json()
             a = {w["id"] for w in first["items"]}
             b = {w["id"] for w in second["items"]}
@@ -120,7 +121,7 @@ class TestPaging:
     def test_an_unreadable_cursor_starts_over_rather_than_erroring(self, client, filled):
         # The user did not type it, so a stale cursor from an older shape is not
         # their problem.
-        r = client.get("/api/catalog/rail/trending?cursor=not-a-real-cursor")
+        r = client.get("/api/catalog/rail/latest?cursor=not-a-real-cursor")
         assert r.status_code == 200 and r.json()["items"]
 
     def test_an_unknown_rail_is_a_404(self, client, filled):

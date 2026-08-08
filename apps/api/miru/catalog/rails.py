@@ -39,15 +39,24 @@ class Rail:
     note: str | None = None
 
 
+# Order matters twice over. Rails are mutually exclusive, so the first one gets
+# first pick of the catalogue — and it is the one the hero is drawn from. Latest
+# leads because a wall whose top row is not in any obvious order reads as
+# random, however good the ranking behind it is.
 RAILS = [
+    Rail("latest", "Latest releases", "新着", "latest"),
     Rail("trending", "Trending now", "人気", "trending"),
-    Rail("fresh", "Fresh this week", "新着", "fresh"),
 ]
 
 
+def _sort_value(work: CatalogWork, sort: str):
+    if sort == "trending":
+        return work.best_seeder_pct
+    return (work.latest_release_at or work.first_seen_at).isoformat()
+
+
 def encode_cursor(work: CatalogWork, sort: str) -> str:
-    value = work.best_seeder_pct if sort == "trending" else work.first_seen_at.isoformat()
-    return base64.urlsafe_b64encode(f"{value}|{work.id}".encode()).decode()
+    return base64.urlsafe_b64encode(f"{_sort_value(work, sort)}|{work.id}".encode()).decode()
 
 
 def decode_cursor(cursor: str | None) -> tuple[str, int] | None:
@@ -71,8 +80,13 @@ def _base(kind: str | None) -> Select:
 
 
 def _ordered(q: Select, sort: str) -> Select:
-    if sort == "fresh":
-        return q.order_by(CatalogWork.first_seen_at.desc(), CatalogWork.id.desc())
+    if sort == "latest":
+        # Newest first, by the indexer's own publish date. Ordering on
+        # first_seen_at instead gave every work in a pass the same timestamp, so
+        # the row fell back to insertion order and looked shuffled.
+        return q.order_by(
+            CatalogWork.latest_release_at.desc().nullslast(), CatalogWork.id.desc()
+        )
     return q.order_by(
         CatalogWork.best_seeder_pct.desc(),
         CatalogWork.release_count.desc(),
@@ -84,7 +98,7 @@ def _seek(q: Select, sort: str, cursor: tuple[str, int] | None) -> Select:
     if cursor is None:
         return q
     value, work_id = cursor
-    if sort == "fresh":
+    if sort == "latest":
         from datetime import datetime
 
         try:
@@ -93,8 +107,8 @@ def _seek(q: Select, sort: str, cursor: tuple[str, int] | None) -> Select:
             return q
         return q.where(
             or_(
-                CatalogWork.first_seen_at < after,
-                (CatalogWork.first_seen_at == after) & (CatalogWork.id < work_id),
+                CatalogWork.latest_release_at < after,
+                (CatalogWork.latest_release_at == after) & (CatalogWork.id < work_id),
             )
         )
     try:
