@@ -37,6 +37,11 @@ class SearchResult:
     age_days: int
     magnet: str | None
     download_url: str | None
+    # The torrent's own identity, and the only field here that is stable.
+    # Prowlarr re-encrypts its download links on every response, so guid and
+    # downloadUrl change between two calls three seconds apart — measured at
+    # 299 of 299 results. Identity has to come from the swarm, not the proxy.
+    info_hash: str | None = None
     categories: list[str] = field(default_factory=list)
     # Ids, not just names. Classification runs on these because the live
     # instance returns category objects carrying an id and no name at all

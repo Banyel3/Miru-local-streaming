@@ -4,6 +4,8 @@ Runs the whole refresh pass against a fake provider carrying the shapes the live
 indexers actually return. No network, no Prowlarr, no PC.
 """
 
+import hashlib
+
 import pytest
 from sqlalchemy import select
 
@@ -16,10 +18,17 @@ YTS_CATS = [2040, 100045]
 TPB_TV_CATS = [5030]
 
 
-def result(title, indexer="Nyaa.si", seeders=100, cats=None, size=1_400_000_000, guid=None):
-    magnet = guid or f"magnet:?xt=urn:btih:{abs(hash(title)) & 0xFFFFFFFF:08x}"
+def result(title, indexer="Nyaa.si", seeders=100, cats=None, size=1_400_000_000, guid=None,
+           info_hash=None):
+    # The link is deliberately unstable, mirroring the real thing: Prowlarr
+    # re-encrypts it on every response, so a test that reuses one would prove
+    # something the live instance does not do. Identity comes from the
+    # infohash, which is derived from the title here so it stays stable.
+    magnet = guid or f"magnet:?xt=urn:btih:{abs(hash(title)) & 0xFFFFFFFF:08x}-{id(object()):x}"
+    ih = info_hash or hashlib.sha1(title.encode()).hexdigest()
     return SearchResult(
         id=magnet,
+        info_hash=ih,
         title=title,
         indexer=indexer,
         size_bytes=size,
@@ -126,8 +135,10 @@ class TestAccumulation:
         assert any("One Piece" in t for t in titles)
 
     def test_a_release_seen_again_is_updated_not_duplicated(self, db_session):
-        first = [result("[RLSP] One Piece 744-746 [BD 720p]", seeders=303, guid="magnet:?xt=fixed")]
-        again = [result("[RLSP] One Piece 744-746 [BD 720p]", seeders=12, guid="magnet:?xt=fixed")]
+        # Same torrent, different link — which is exactly what the live Prowlarr
+        # returns three seconds apart. Keying on the link would insert it twice.
+        first = [result("[RLSP] One Piece 744-746 [BD 720p]", seeders=303)]
+        again = [result("[RLSP] One Piece 744-746 [BD 720p]", seeders=12)]
 
         refresh(db_session, FakeProvider([first]))
         refresh(db_session, FakeProvider([again]))

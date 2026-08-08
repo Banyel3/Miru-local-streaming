@@ -266,3 +266,138 @@ export const STRATEGY: Record<MediaFile["playback_strategy"], { label: string; n
     note: "This codec cannot be decoded by the browser, so the PC re-encodes it.",
   },
 };
+
+/* ── The browse wall ──────────────────────────────────────────────────────
+ *
+ * Works, not releases. One measured refresh collapsed 247 releases into 141
+ * works, so a card is a show or a film and the releases behind it are the
+ * choices in the picker.
+ */
+
+export type CatalogWork = {
+  id: number;
+  kind: "anime" | "movie" | "series";
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  overview: string | null;
+  score: number | null;
+  release_count: number;
+  best_seeder_pct: number;
+  /** Set once we own it. Written at download time, never derived. */
+  library_file_id: number | null;
+  download_job_id: string | null;
+};
+
+export type CatalogRelease = {
+  guid: string;
+  title: string;
+  indexer: string;
+  quality: string | null;
+  group: string | null;
+  size_bytes: number;
+  seeders: number;
+  season: number | null;
+  episode: number | null;
+  episode_end: number | null;
+  /** The claim only Miru can make, predicted from the release name. */
+  needs_pc: boolean;
+  predicted_strategy: MediaFile["playback_strategy"];
+  stale: boolean;
+  grabbable: boolean;
+};
+
+export type CatalogRail = {
+  key: string;
+  title: string;
+  jp: string;
+  /** "grid" when a row is too short to read as a rail rather than as a bug. */
+  layout: "rail" | "grid" | "empty";
+  items: CatalogWork[];
+  next_cursor: string | null;
+};
+
+export type Wall = {
+  kind: string;
+  /** False means Download and live search are dead, whatever the wall shows. */
+  pc_reachable: boolean;
+  empty: boolean;
+  refreshed_at: string | null;
+  refresh_error: string | null;
+  rails: CatalogRail[];
+  note: string | null;
+};
+
+export type WorkDetail = CatalogWork & {
+  pc_reachable: boolean;
+  choices: {
+    best: CatalogRelease | null;
+    smallest: CatalogRelease | null;
+    best_quality: CatalogRelease | null;
+  };
+  releases: CatalogRelease[];
+  /** Nothing here clears the viability bar. Said before the download, not after. */
+  all_dead: boolean;
+};
+
+export type ActiveDownload = {
+  work_id: number;
+  title: string;
+  job_id: string;
+  state: "queued" | "downloading" | "done" | "failed" | "cancelled";
+  progress: number;
+  speed_bps?: number;
+  eta_seconds?: number | null;
+  error?: string | null;
+  /** aria2 finishing is not the same as playable — the mover runs after. */
+  in_library?: boolean;
+};
+
+export const getWall = (kind = "all") => get<Wall>(`/api/catalog?kind=${kind}`);
+
+export const getRailPage = (key: string, kind: string, cursor: string) =>
+  get<{ items: CatalogWork[]; next_cursor: string | null }>(
+    `/api/catalog/rail/${key}?kind=${kind}&cursor=${encodeURIComponent(cursor)}`,
+  );
+
+export const getWork = (id: number) => get<WorkDetail>(`/api/catalog/works/${id}`);
+
+export const KIND_LABEL: Record<string, string> = {
+  all: "All",
+  anime: "Anime",
+  movie: "Movies",
+  series: "Series",
+};
+
+/** How long ago the indexers were last asked. A refresh that quietly died would
+ *  otherwise look identical to one that is simply up to date. */
+export function freshness(iso: string | null, error: string | null) {
+  if (error) return "Couldn't reach the indexers — showing what we have";
+  if (!iso) return "Not fetched yet";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "Updated just now";
+  if (mins < 60) return `Updated ${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  return hrs < 24 ? `Updated ${hrs}h ago` : `Updated ${Math.round(hrs / 24)}d ago`;
+}
+
+/** What a release means for playback, in the user's terms rather than ours. */
+export function playbackNote(r: CatalogRelease) {
+  return r.needs_pc
+    ? { text: "Needs the PC awake to transcode", tone: "warn" as const }
+    : { text: "Plays directly — the PC can stay asleep", tone: "good" as const };
+}
+
+export function releaseSpec(r: CatalogRelease) {
+  return [r.quality, fileSize(r.size_bytes), `${r.seeders.toLocaleString()} seeders`, r.group]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function episodeLabel(r: CatalogRelease) {
+  if (r.episode == null) return null;
+  if (r.episode_end && r.episode_end !== r.episode) {
+    return `Episodes ${r.episode}–${r.episode_end}`;
+  }
+  return `Episode ${r.episode}`;
+}

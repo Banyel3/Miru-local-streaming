@@ -26,6 +26,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -36,6 +37,16 @@ from miru.core.db import Base
 # Same variant trick as library.models: JSONB on Postgres, plain JSON on
 # SQLite, so the suite runs in CI with no database server.
 JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+
+# Public trackers, for bootstrap only. DHT alone finds peers eventually; these
+# make it seconds rather than minutes, which is the difference between Watch Now
+# feeling instant and feeling broken.
+OPEN_TRACKERS = (
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+)
 
 
 def _now() -> datetime:
@@ -96,15 +107,27 @@ class CatalogRelease(Base):
 
     __tablename__ = "catalog_releases"
     __table_args__ = (
-        UniqueConstraint("indexer", "guid", name="uq_release_identity"),
+        # The infohash, because it is the only stable thing on offer. Prowlarr
+        # re-encrypts its download links every response — measured, 299 of 299
+        # guids differed between two calls three seconds apart — so keying on
+        # guid would have inserted the entire catalogue again on every refresh
+        # and quietly destroyed the accumulate design.
+        #
+        # Not scoped to the indexer either: the same torrent listed on two
+        # indexers is one torrent, and collapsing it is correct rather than a
+        # compromise.
+        UniqueConstraint("info_hash", name="uq_release_identity"),
         Index("ix_releases_work", "work_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    info_hash: Mapped[str] = mapped_column(String(40))
     indexer: Mapped[str] = mapped_column(String(128))
-    guid: Mapped[str] = mapped_column(String(2048))
+    # Last seen link. Kept for reference only: it expires, and grabs are built
+    # from the infohash instead.
+    guid: Mapped[str] = mapped_column(Text)
 
-    title: Mapped[str] = mapped_column(String(1024))
+    title: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(16), index=True)
     work_id: Mapped[int | None] = mapped_column(
         ForeignKey("catalog_works.id", ondelete="CASCADE"), nullable=True
@@ -126,8 +149,8 @@ class CatalogRelease(Base):
     # reports zero for two thirds of its catalogue, a third caps out at 2.
     seeder_pct: Mapped[float] = mapped_column(Float, default=0.5)
 
-    magnet: Mapped[str | None] = mapped_column(String(4096), nullable=True)
-    download_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    magnet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    download_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     imdb_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
     categories: Mapped[list] = mapped_column(JSONType, default=list)
 
@@ -145,6 +168,23 @@ class CatalogRelease(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     STALE_AFTER = 20
+
+    @property
+    def magnet_uri(self) -> str:
+        """A magnet built from the infohash, not from the stored link.
+
+        Prowlarr's proxy URL carries an encrypted payload it regenerates each
+        response, so a link stored weeks ago is not something to rely on. An
+        infohash magnet is what the swarm actually answers to, and both DHT and
+        the trackers below will find peers from it.
+        """
+        import urllib.parse
+
+        trackers = "".join(f"&tr={urllib.parse.quote(t, safe='')}" for t in OPEN_TRACKERS)
+        return (
+            f"magnet:?xt=urn:btih:{self.info_hash}"
+            f"&dn={urllib.parse.quote(self.title)}{trackers}"
+        )
 
     @property
     def stale(self) -> bool:

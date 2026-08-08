@@ -32,3 +32,76 @@ export async function pollJob(id: number): Promise<{ job: Job } | { error: strin
 export async function refreshLibrary() {
   revalidatePath("/", "layout");
 }
+
+/* ── The wall ─────────────────────────────────────────────────────────────
+ *
+ * Same reason as scans: the API stays server-to-server. The browser holds no
+ * token, and the API address it would need is not the one the browser can
+ * reach in the two-box deployment.
+ */
+
+import type { ActiveDownload, CatalogWork, WorkDetail } from "@/lib/api";
+
+export async function loadRail(
+  key: string,
+  kind: string,
+  cursor: string,
+): Promise<{ items: CatalogWork[]; next_cursor: string | null } | { error: string }> {
+  try {
+    const res = await fetch(
+      `${API_INTERNAL}/api/catalog/rail/${key}?kind=${kind}&cursor=${encodeURIComponent(cursor)}`,
+      { cache: "no-store" },
+    );
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    return await res.json();
+  } catch {
+    return { error: "unreachable" };
+  }
+}
+
+export async function loadWork(id: number): Promise<{ work: WorkDetail } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/works/${id}`, { cache: "no-store" });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    return { work: await res.json() };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}
+
+export async function startDownload(
+  workId: number,
+  releaseGuid: string | null,
+  watch: boolean,
+): Promise<{ jobId: string } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/works/${workId}/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ release_guid: releaseGuid, watch }),
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      // The API's own sentence is better than anything invented here: it knows
+      // whether the PC is asleep, the swarm is dead, or the indexer refused.
+      return { error: body?.detail ?? `The download was refused (HTTP ${res.status}).` };
+    }
+    return { jobId: body.job_id };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}
+
+export async function pollDownloads(): Promise<
+  { downloads: ActiveDownload[]; pcReachable: boolean } | { error: string }
+> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/downloads`, { cache: "no-store" });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const body = await res.json();
+    return { downloads: body.downloads, pcReachable: body.pc_reachable };
+  } catch {
+    return { error: "unreachable" };
+  }
+}

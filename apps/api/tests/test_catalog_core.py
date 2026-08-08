@@ -160,6 +160,16 @@ class TestPickingOnTheUsersBehalf:
         assert pick_default(items).id == "good"
         assert [c.id for c in usable(items)] == ["good"]
 
+    def test_quality_outranks_sparing_the_pc(self):
+        # Regression. Ranking on needs_pc first picked a 480p rip over a 1080p
+        # one, which spares a GPU that exists precisely to be used. Avoiding the
+        # PC breaks a tie inside a quality tier; it does not drop two tiers.
+        items = [
+            Candidate("sd", "Show S01E16 480p x264", "TPB", 8, 240_000_000, "480p"),
+            Candidate("hd", "Show S01E16 1080p x265", "TPB", 14, 630_000_000, "1080p"),
+        ]
+        assert pick_default(items).id == "hd"
+
     def test_a_release_that_avoids_waking_the_pc_wins_a_tie(self):
         # The differentiator. Same quality, x264 beats x265 because the PC can
         # stay asleep.

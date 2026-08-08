@@ -110,6 +110,7 @@ class ProwlarrAria2Provider:
             age_days=int(r.get("age") or 0),
             magnet=magnet,
             download_url=r.get("downloadUrl"),
+            info_hash=(r.get("infoHash") or "").lower() or None,
             categories=[c.get("name") for c in (r.get("categories") or []) if c.get("name")],
             category_ids=[
                 int(c["id"]) for c in (r.get("categories") or []) if c.get("id") is not None

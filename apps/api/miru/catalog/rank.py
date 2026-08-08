@@ -101,9 +101,14 @@ def pick_default(items: list[Candidate]) -> Candidate | None:
 
     Order of preference, most to least important:
       1. viable seeder count — a download that does not finish is not a choice
-      2. does not need the PC awake — the thing only Miru can know
-      3. preferred quality
+      2. preferred quality
+      3. does not need the PC awake — the thing only Miru can know
       4. best standing within its own indexer
+
+    Quality outranks PC-avoidance deliberately, and getting this backwards was
+    a real bug: ranking on needs_pc first picked a 480p rip over a 1080p one to
+    spare a GPU that exists precisely to be used. Avoiding the PC is a
+    tie-breaker *within* a quality tier, not a reason to drop two tiers.
     """
     pool = usable(items)
     if not pool:
@@ -115,7 +120,7 @@ def pick_default(items: list[Candidate]) -> Candidate | None:
 
     return min(
         ranked,
-        key=lambda c: (needs_pc(c.title), _quality_rank(c.quality), -pct[c.id], c.size_bytes),
+        key=lambda c: (_quality_rank(c.quality), needs_pc(c.title), -pct[c.id], c.size_bytes),
     )
 
 

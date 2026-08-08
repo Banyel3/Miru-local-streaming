@@ -62,7 +62,7 @@ def pc_reachable() -> bool:
 def _candidates(releases: list[CatalogRelease]) -> list[Candidate]:
     return [
         Candidate(
-            id=r.guid,
+            id=r.info_hash,
             title=r.title,
             indexer=r.indexer,
             seeders=r.seeders,
@@ -94,7 +94,7 @@ def _work_json(w: CatalogWork) -> dict:
 
 def _release_json(r: CatalogRelease) -> dict:
     return {
-        "guid": r.guid,
+        "info_hash": r.info_hash,
         "title": r.title,
         "indexer": r.indexer,
         "quality": r.quality,
@@ -202,7 +202,7 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
             .order_by(CatalogRelease.seeder_pct.desc())
         ).scalars()
     )
-    by_guid = {r.guid: r for r in releases}
+    by_hash = {r.info_hash: r for r in releases}
     choices = three_choices(_candidates(releases))
 
     return {
@@ -210,7 +210,7 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
         "pc_reachable": pc_reachable(),
         # Forty rows is not a choice anyone can make. Three named ones are.
         "choices": {
-            name: (_release_json(by_guid[c.id]) if c and c.id in by_guid else None)
+            name: (_release_json(by_hash[c.id]) if c and c.id in by_hash else None)
             for name, c in choices.items()
         },
         "releases": [_release_json(r) for r in releases],
@@ -220,7 +220,7 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
 
 
 class Grab(BaseModel):
-    release_guid: str | None = None
+    info_hash: str | None = None
     watch: bool = True
 
 
@@ -236,17 +236,20 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     releases = list(
         db.execute(select(CatalogRelease).where(CatalogRelease.work_id == work_id)).scalars()
     )
-    if grab.release_guid:
-        chosen = next((r for r in releases if r.guid == grab.release_guid), None)
+    if grab.info_hash:
+        chosen = next((r for r in releases if r.info_hash == grab.info_hash), None)
     else:
         picked = three_choices(_candidates(releases))["best"]
-        chosen = next((r for r in releases if picked and r.guid == picked.id), None)
+        chosen = next((r for r in releases if picked and r.info_hash == picked.id), None)
 
     if chosen is None:
         raise HTTPException(409, "Nothing here can be downloaded.")
 
     try:
-        job = provider.submit(chosen.magnet or chosen.download_url)
+        # Built from the infohash rather than the stored link: Prowlarr's proxy
+        # URL carries a payload it regenerates every response, so the one on
+        # this row may already be dead.
+        job = provider.submit(chosen.magnet_uri)
     except AcquisitionError as exc:
         raise HTTPException(502, str(exc)) from exc
 

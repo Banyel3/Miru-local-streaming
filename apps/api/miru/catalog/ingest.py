@@ -56,11 +56,8 @@ def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWo
 
 def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool:
     """Write one release. Returns True if it is new to the catalog."""
-    guid = r.magnet or r.download_url or r.id
     existing = db.execute(
-        select(CatalogRelease).where(
-            CatalogRelease.indexer == r.indexer, CatalogRelease.guid == guid
-        )
+        select(CatalogRelease).where(CatalogRelease.info_hash == r.info_hash)
     ).scalar_one_or_none()
 
     p = parse(r.title, kind)
@@ -69,8 +66,9 @@ def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool
     if existing is None:
         db.add(
             CatalogRelease(
+                info_hash=r.info_hash,
                 indexer=r.indexer,
-                guid=guid,
+                guid=r.magnet or r.download_url or r.id,
                 title=r.title,
                 kind=kind,
                 work_id=work.id,
@@ -95,6 +93,7 @@ def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool
         return True
 
     # Seen again: refresh the volatile fields and clear the staleness counter.
+    existing.guid = r.magnet or r.download_url or r.id
     existing.seeders = int(r.seeders or 0)
     existing.leechers = int(r.leechers or 0)
     existing.seeder_pct = pct
@@ -143,7 +142,10 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     placed: list[tuple[SearchResult, str]] = []
     for r in results:
         kind = classify(getattr(r, "category_ids", []) or [])
-        if kind and (not kinds or kind in kinds) and r.grabbable:
+        # No infohash means no stable identity, and a row we cannot recognise
+        # next time is a row that would be re-inserted forever. Measured, every
+        # result from all three indexers carries one.
+        if kind and (not kinds or kind in kinds) and r.grabbable and r.info_hash:
             placed.append((r, kind))
 
     # Percentiles are computed across the whole pass, because standing is
@@ -151,7 +153,7 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     pct = seeder_percentiles(
         [
             Candidate(
-                id=r.magnet or r.download_url or r.id,
+                id=r.info_hash,
                 title=r.title,
                 indexer=r.indexer,
                 seeders=int(r.seeders or 0),
@@ -161,27 +163,27 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
         ]
     )
 
-    seen_guids: set[tuple[str, str]] = set()
+    seen: set[str] = set()
     added = 0
     per_indexer: dict[str, int] = {}
 
     for r, kind in placed:
-        guid = r.magnet or r.download_url or r.id
-        if (r.indexer, guid) in seen_guids:
+        # The same torrent listed at two indexers is one torrent.
+        if r.info_hash in seen:
             continue
-        seen_guids.add((r.indexer, guid))
-        if _upsert_release(db, r, kind, pct.get(guid, 0.5)):
+        seen.add(r.info_hash)
+        if _upsert_release(db, r, kind, pct.get(r.info_hash, 0.5)):
             added += 1
         per_indexer[r.indexer] = per_indexer.get(r.indexer, 0) + 1
 
     # Age everything this pass did not see. Kept, never deleted.
     for rel in db.execute(select(CatalogRelease)).scalars():
-        if (rel.indexer, rel.guid) not in seen_guids:
+        if rel.info_hash not in seen:
             rel.missed_refreshes += 1
 
     _restate_works(db)
 
-    row.seen = len(seen_guids)
+    row.seen = len(seen)
     row.added = added
     row.per_indexer = per_indexer
     row.finished_at = _now()
