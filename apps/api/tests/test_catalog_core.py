@@ -221,6 +221,39 @@ class TestPickingOnTheUsersBehalf:
         assert pick_default(items) is None
         assert three_choices(items) == {"best": None, "smallest": None, "best_quality": None}
 
+    def test_a_series_stays_with_the_group_it_was_started_from(self):
+        # The reported failure: episode 1 from SubsPlease, 2 from Erai-raws, 3
+        # from ToonsHub — one show with three subtitle styles and three encodes,
+        # because nothing remembered where the last episode came from.
+        items = [
+            Candidate("subs", "[SubsPlease] Show - 03 (1080p) x264", "Nyaa.si", 90, 1.4e9,
+                      "1080p", group="SubsPlease"),
+            Candidate("erai", "[Erai-raws] Show - 03 (1080p) x264", "Nyaa.si", 90, 0.9e9,
+                      "1080p", group="Erai-raws"),
+        ]
+        assert pick_default(items).id == "erai"                       # smaller wins the tie
+        assert pick_default(items, "SubsPlease").id == "subs"         # …until we own one
+
+    def test_group_affinity_never_costs_a_quality_tier(self):
+        # Affinity is a tie-break, not a rule. Following the group down to 720p
+        # would be the needs_pc bug again in a different costume.
+        items = [
+            Candidate("subs720", "[SubsPlease] Show - 03 (720p) x264", "Nyaa.si", 90, 0.7e9,
+                      "720p", group="SubsPlease"),
+            Candidate("erai1080", "[Erai-raws] Show - 03 (1080p) x264", "Nyaa.si", 90, 1.4e9,
+                      "1080p", group="Erai-raws"),
+        ]
+        assert pick_default(items, "SubsPlease").id == "erai1080"
+
+    def test_a_group_we_own_but_that_has_nothing_here_changes_nothing(self):
+        items = [
+            Candidate("a", "[Erai-raws] Show - 03 (1080p) x264", "Nyaa.si", 90, 0.9e9,
+                      "1080p", group="Erai-raws"),
+            Candidate("b", "[ToonsHub] Show - 03 (1080p) x264", "Nyaa.si", 90, 1.4e9,
+                      "1080p", group="ToonsHub"),
+        ]
+        assert pick_default(items, "SubsPlease").id == pick_default(items).id
+
     def test_the_sheet_can_tell_the_user_the_swarm_is_dead(self):
         thin = [Candidate("a", "Film 1080p x264", "YTS", 1, 2e9, "1080p")]
         assert all_viable_dead(thin)

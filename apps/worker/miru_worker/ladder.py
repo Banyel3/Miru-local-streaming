@@ -94,8 +94,19 @@ def build_command(
     else:
         # split the decoded video once, scale each branch, encode each branch.
         splits = "".join(f"[v{i}]" for i in range(len(renditions)))
+        # format=nv12 is not optional. h264_nvenc emits 8-bit 4:2:0 and cannot
+        # take anything else as an input buffer — handed a 10-bit or 4:4:4 frame
+        # it fails at encoder *open* with "CreateInputBuffer failed: invalid
+        # param (8)" and "-22 (Invalid argument)", which reads like a bad
+        # bitrate or resolution and is neither. Measured on a real download:
+        # yuv444p10le, i.e. 10-bit AND 4:4:4. Two of the seven files in the test
+        # library are 10-bit, so this is ordinary anime rather than an edge case.
+        #
+        # After the scale, not before: scaling in the source format and
+        # converting once at the end keeps the precision until the last moment.
         chains = ";".join(
-            f"[v{i}]scale=-2:{r.height}[v{i}out]" for i, r in enumerate(renditions)
+            f"[v{i}]scale=-2:{r.height},format=nv12[v{i}out]"
+            for i, r in enumerate(renditions)
         )
         maps = ["-filter_complex", f"[0:v]split={len(renditions)}{splits};{chains}"]
 

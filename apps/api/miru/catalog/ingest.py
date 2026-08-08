@@ -141,14 +141,21 @@ def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool
     return False
 
 
-def _restate_works(db: Session) -> None:
+def _restate_works(db: Session, only: set[int] | None = None) -> None:
     """Recompute what the rails sort on.
 
     Done as a pass over the affected works rather than incrementally, because a
     release dropping out has to lower its work's standing too, and incremental
     maxima only ever go up.
+
+    `only` narrows it to the works just written. A refresh restates everything
+    because it also ages rows it did not see; a search touched a handful of
+    works and has no business loading every release in the catalogue.
     """
-    for work in db.execute(select(CatalogWork)).scalars().all():
+    q = select(CatalogWork)
+    if only is not None:
+        q = q.where(CatalogWork.id.in_(only))
+    for work in db.execute(q).scalars().all():
         releases = db.execute(
             select(CatalogRelease).where(CatalogRelease.work_id == work.id)
         ).scalars().all()
@@ -164,6 +171,91 @@ def _restate_works(db: Session) -> None:
         work.best_seeder_pct = max((r.seeder_pct for r in live), default=0.0)
         dates = [r.published_at for r in releases if r.published_at]
         work.latest_release_at = max(dates) if dates else work.first_seen_at
+
+
+def _ingest(
+    db: Session, results: list[SearchResult], kinds: tuple[str, ...] = ()
+) -> tuple[set[str], int, dict[str, int]]:
+    """classify -> parse -> upsert, for whatever the indexers just handed us.
+
+    Returns the infohashes written, how many were new, and the per-indexer
+    counts. Deliberately does no bookkeeping: aging and restating belong to
+    whoever knows what the results *mean*, and a search means something
+    different from a refresh pass.
+    """
+    # Classify first: a release we cannot place is not a release we ingest.
+    placed: list[tuple[SearchResult, str]] = []
+    for r in results:
+        kind = classify(getattr(r, "category_ids", []) or [])
+        # No infohash means no stable identity, and a row we cannot recognise
+        # next time is a row that would be re-inserted forever. Measured, every
+        # result from all three indexers carries one.
+        if kind and (not kinds or kind in kinds) and r.grabbable and r.info_hash:
+            placed.append((r, kind))
+
+    # Percentiles are computed across the whole batch, because standing is
+    # relative to what that indexer is currently showing.
+    pct = seeder_percentiles(
+        [
+            Candidate(
+                id=r.info_hash,
+                title=r.title,
+                indexer=r.indexer,
+                seeders=int(r.seeders or 0),
+                size_bytes=int(r.size_bytes or 0),
+            )
+            for r, _ in placed
+        ]
+    )
+
+    seen: set[str] = set()
+    added = 0
+    per_indexer: dict[str, int] = {}
+
+    for r, kind in placed:
+        # The same torrent listed at two indexers is one torrent.
+        if r.info_hash in seen:
+            continue
+        seen.add(r.info_hash)
+        if _upsert_release(db, r, kind, pct.get(r.info_hash, 0.5)):
+            added += 1
+        per_indexer[r.indexer] = per_indexer.get(r.indexer, 0) + 1
+
+    return seen, added, per_indexer
+
+
+def ingest_search(db: Session, results: list[SearchResult]) -> dict:
+    """Keep what a live search found.
+
+    Searching used to render and discard, which threw away the only reach Miru
+    has: each indexer's front page spans about one day, `limit` is ignored and
+    `offset` returns nothing, so a query is the ONLY way to see anything older.
+    Searching for a show therefore adds it to the catalogue permanently.
+
+    Not a refresh pass, and the difference is the whole reason this is its own
+    function: nothing is aged and no CatalogRefresh row is written. A query says
+    what matches it, not what the indexers are currently showing, so a release
+    it did not mention was never asked about rather than missing.
+
+    Releases land with their real `published_at` — the same field a refresh
+    writes — so an eight-year-old release found by searching sorts where it
+    belongs instead of jumping to the top of the Latest rail.
+    """
+    seen, added, _ = _ingest(db, results)
+    if not seen:
+        return {"seen": 0, "added": 0}
+
+    db.flush()
+    work_ids = {
+        wid
+        for wid in db.execute(
+            select(CatalogRelease.work_id).where(CatalogRelease.info_hash.in_(seen))
+        ).scalars()
+        if wid is not None
+    }
+    _restate_works(db, work_ids)
+    db.commit()
+    return {"seen": len(seen), "added": added}
 
 
 def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
@@ -201,43 +293,7 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     if failures:
         row.error = ("; ".join(failures))[:512]
 
-    # Classify first: a release we cannot place is not a release we ingest.
-    placed: list[tuple[SearchResult, str]] = []
-    for r in results:
-        kind = classify(getattr(r, "category_ids", []) or [])
-        # No infohash means no stable identity, and a row we cannot recognise
-        # next time is a row that would be re-inserted forever. Measured, every
-        # result from all three indexers carries one.
-        if kind and (not kinds or kind in kinds) and r.grabbable and r.info_hash:
-            placed.append((r, kind))
-
-    # Percentiles are computed across the whole pass, because standing is
-    # relative to what that indexer is currently showing.
-    pct = seeder_percentiles(
-        [
-            Candidate(
-                id=r.info_hash,
-                title=r.title,
-                indexer=r.indexer,
-                seeders=int(r.seeders or 0),
-                size_bytes=int(r.size_bytes or 0),
-            )
-            for r, _ in placed
-        ]
-    )
-
-    seen: set[str] = set()
-    added = 0
-    per_indexer: dict[str, int] = {}
-
-    for r, kind in placed:
-        # The same torrent listed at two indexers is one torrent.
-        if r.info_hash in seen:
-            continue
-        seen.add(r.info_hash)
-        if _upsert_release(db, r, kind, pct.get(r.info_hash, 0.5)):
-            added += 1
-        per_indexer[r.indexer] = per_indexer.get(r.indexer, 0) + 1
+    seen, added, per_indexer = _ingest(db, results, kinds)
 
     # Age everything this pass did not see. Kept, never deleted.
     for rel in db.execute(select(CatalogRelease)).scalars():

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CatalogRelease,
   CatalogWork,
@@ -10,8 +10,9 @@ import {
   playbackNote,
   releaseSpec,
 } from "@/lib/api";
-import { Button } from "@/components/ui";
-import { Close } from "@/components/icons";
+import { Group, SECTION, grabbable, groupReleases, threeChoices } from "@/lib/episodes";
+import { Button, EmptyState, MicroChip } from "@/components/ui";
+import { ChevronLeft, Close } from "@/components/icons";
 import { useRouter } from "next/navigation";
 import { loadWork, startDownload } from "@/app/actions";
 
@@ -30,6 +31,7 @@ const CHOICE_LABEL: Record<string, string> = {
   smallest: "Smallest",
   best_quality: "Best quality",
 };
+
 
 function Choice({
   name,
@@ -76,6 +78,34 @@ function Choice({
   );
 }
 
+/** The group's own episode span, worded by the one formatter that already
+ *  words it for the footer. Unnumbered releases have no span to word. */
+const groupLabel = (g: Group) => episodeLabel(g.releases[0]) ?? "No episode number";
+
+/** One episode, or one batch. The chips preview the release you would get by
+ *  clicking, so the row and the picker behind it cannot disagree. */
+function EpisodeRow({ group, onOpen }: { group: Group; onOpen: () => void }) {
+  const pick = threeChoices(group.releases).best ?? group.releases[0];
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-h-11 w-full items-center gap-3 rounded-2xl border border-border bg-bg px-3.5 py-2 text-left transition-colors hover:border-border-hover"
+      >
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold">{groupLabel(group)}</span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {pick.quality && <MicroChip>{pick.quality}</MicroChip>}
+          <MicroChip>{fileSize(pick.size_bytes)}</MicroChip>
+          <MicroChip tone={group.releases.length > 1 ? "bright" : "muted"}>
+            {group.releases.length} rel
+          </MicroChip>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 export function ReleaseSheet({
   work,
   onClose,
@@ -89,6 +119,10 @@ export function ReleaseSheet({
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The episode being looked at, or null at the episode list. One sheet, two
+   *  levels, no route change — the wall behind it keeps its scroll position. */
+  const [scope, setScope] = useState<Group | null>(null);
+  const body = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -115,15 +149,42 @@ export function ReleaseSheet({
     };
   }, [work.id]);
 
+  // Escape pops one level and only closes at the top, so backing out of an
+  // episode does not also throw away the show.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (scope) setScope(null);
+      else onClose();
+    };
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [onClose]);
+  }, [onClose, scope]);
+
+  // A film has no episodes to list, and neither does a show whose whole
+  // catalogue is one entry — a level with a single row is a level nobody wants.
+  const groups = useMemo(
+    () =>
+      !detail || work.kind === "movie" || work.format === "MOVIE"
+        ? []
+        : groupReleases(detail.releases),
+    [detail, work.kind, work.format],
+  );
+  const atEpisodes = groups.length > 1 && !scope;
+
+  function open(group: Group) {
+    setScope(group);
+    setChosen(
+      threeChoices(group.releases).best?.info_hash ??
+        group.releases.find(grabbable)?.info_hash ??
+        null,
+    );
+    body.current?.scrollTo(0, 0);
+  }
 
   async function start(watch: boolean) {
     if (!chosen) return;
@@ -143,16 +204,31 @@ export function ReleaseSheet({
     if (watch) router.push(`/watching/${res.jobId}`);
   }
 
+  // Scoped to an episode the API's three choices are the wrong three — they
+  // rank the whole show — so that subset gets its own.
+  const releases = scope ? scope.releases : (detail?.releases ?? []);
+  const picked = scope ? threeChoices(scope.releases) : detail?.choices;
+
   // Two choices may be the same release. Showing the identical row twice under
   // different names makes the picker look broken.
   const seen = new Set<string>();
-  const choices = Object.entries(detail?.choices ?? {}).filter(([, r]) => {
+  const choices = Object.entries(picked ?? {}).filter(([, r]) => {
     if (!r || seen.has(r.info_hash)) return false;
     seen.add(r.info_hash);
     return true;
   }) as [string, CatalogRelease][];
 
+  const current = releases.find((r) => r.info_hash === chosen);
   const offline = detail && !detail.pc_reachable;
+
+  // "8 of 1,172" is the honest line. The other 1,164 have no release behind
+  // them, so they are counted here and never rendered as rows.
+  const listed = groups.filter((g) => g.kind !== "unsorted").length;
+  const total = work.episode_count;
+  const episodeCount =
+    total && total > listed
+      ? `${listed} of ${total.toLocaleString()} episodes`
+      : `${listed} episode${listed === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -174,16 +250,35 @@ export function ReleaseSheet({
         className="absolute inset-0 z-0 bg-bg-deep/70 backdrop-blur-sm"
       />
 
-      <div className="relative z-10 flex max-h-[92dvh] w-full max-w-[560px] flex-col gap-3 overflow-y-auto rounded-t-3xl border border-border bg-surface p-5 sm:rounded-3xl motion-safe:animate-[miru-rise_.25s_var(--ease-out-quart)]">
+      <div
+        ref={body}
+        className="relative z-10 flex max-h-[92dvh] w-full max-w-[560px] flex-col gap-3 overflow-y-auto rounded-t-3xl border border-border bg-surface p-5 sm:rounded-3xl motion-safe:animate-[miru-rise_.25s_var(--ease-out-quart)]"
+      >
         <header className="flex items-start gap-3">
           <div className="min-w-0">
+            {/* A scope is only reachable from the episode list, so its presence
+                is what says there is a level to pop back to. */}
+            {scope && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setScope(null)}
+                className="-ml-2 mb-1 !px-2"
+              >
+                <ChevronLeft />
+                All episodes
+              </Button>
+            )}
             <h2 className="text-[17px] font-extrabold">
               Get <span className="text-highlight">{work.title}</span>
+              {scope && <span className="text-text-muted"> — {groupLabel(scope)}</span>}
             </h2>
             <p className="mt-0.5 text-[12.5px] text-text-muted">
-              {detail
-                ? `${detail.releases.length} release${detail.releases.length === 1 ? "" : "s"}. Miru picked one.`
-                : "Looking at what's available…"}
+              {!detail
+                ? "Looking at what's available…"
+                : atEpisodes
+                  ? episodeCount
+                  : `${releases.length} release${releases.length === 1 ? "" : "s"}. Miru picked one.`}
             </p>
           </div>
           <button
@@ -216,20 +311,52 @@ export function ReleaseSheet({
           </div>
         )}
 
-        {choices.map(([name, r]) => (
-          <Choice
-            key={name}
-            name={name}
-            release={r}
-            selected={chosen === r.info_hash}
-            onSelect={() => setChosen(r.info_hash)}
-          />
-        ))}
+        {atEpisodes &&
+          (["batch", "single", "unsorted"] as const).map((kind) => {
+            const rows = groups.filter((g) => g.kind === kind);
+            if (!rows.length) return null;
+            return (
+              <section key={kind} className="flex flex-col gap-2">
+                <h3 className="text-[10px] tracking-[0.07em] text-text-muted uppercase">
+                  {SECTION[kind]}
+                </h3>
+                <ul className="flex flex-col gap-2">
+                  {rows.map((g) => (
+                    <EpisodeRow key={g.key} group={g} onOpen={() => open(g)} />
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
 
-        {detail && detail.releases.length > choices.length && (
+        {atEpisodes && (
+          <p className="border-t border-border pt-3 text-[11.5px] text-text-muted">
+            Only episodes your indexers currently list.
+          </p>
+        )}
+
+        {detail && !atEpisodes && releases.length === 0 && (
+          <EmptyState title="No releases behind this one">
+            The indexers listed this when the catalogue was built and list nothing for it now.
+            The next refresh will either bring it back or drop the card.
+          </EmptyState>
+        )}
+
+        {!atEpisodes &&
+          choices.map(([name, r]) => (
+            <Choice
+              key={name}
+              name={name}
+              release={r}
+              selected={chosen === r.info_hash}
+              onSelect={() => setChosen(r.info_hash)}
+            />
+          ))}
+
+        {!atEpisodes && releases.length > choices.length && (
           <details className="border-t border-border pt-3">
             <summary className="cursor-pointer text-[12.5px] font-bold text-text-dim">
-              All {detail.releases.length} releases
+              All {releases.length} releases
             </summary>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full border-collapse text-[11.5px]">
@@ -246,7 +373,7 @@ export function ReleaseSheet({
                   </tr>
                 </thead>
                 <tbody>
-                  {detail.releases.map((r) => (
+                  {releases.map((r) => (
                     <tr
                       key={r.info_hash}
                       onClick={() => r.grabbable && !r.stale && setChosen(r.info_hash)}
@@ -279,12 +406,13 @@ export function ReleaseSheet({
 
         {error && <p className="text-[12.5px] font-bold text-accent">{error}</p>}
 
+        {/* No footer at the episode level: nothing is chosen there, and a
+            disabled Watch Now under a list of episodes reads as broken. */}
+        {!atEpisodes && (
         <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-3.5">
           <p className="min-w-[180px] flex-1 text-[11.5px] text-text-muted">
-            {chosen && detail
-              ? episodeLabel(detail.releases.find((r) => r.info_hash === chosen)!) ??
-                "Downloads to the PC, then moves itself into your library."
-              : "Downloads to the PC, then moves itself into your library."}
+            {(current && episodeLabel(current)) ??
+              "Downloads to the PC, then moves itself into your library."}
           </p>
           <Button variant="secondary" disabled={busy || !chosen || !!offline} onClick={() => start(false)}>
             Download
@@ -293,6 +421,7 @@ export function ReleaseSheet({
             {busy ? "Starting…" : "Watch Now"}
           </Button>
         </footer>
+        )}
       </div>
     </div>
   );

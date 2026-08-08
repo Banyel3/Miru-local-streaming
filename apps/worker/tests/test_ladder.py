@@ -96,3 +96,58 @@ def test_nvenc_and_x264_get_their_own_presets():
     sw = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(720), "libx264"))
     assert "h264_nvenc" in nv and "-preset p4" in nv
     assert "libx264" in sw and "-preset veryfast" in sw
+
+
+class TestPixelFormatIsForcedForNvenc:
+    """h264_nvenc emits 8-bit 4:2:0 H.264 and cannot take anything else as
+    input. Handed a 10-bit or 4:4:4 frame it fails at encoder *open* with
+
+        CreateInputBuffer failed: invalid param (8)
+        Could not open encoder before EOF
+        -22 (Invalid argument)
+
+    which reads like a bad bitrate or resolution and is neither. Measured on a
+    real download: yuv444p10le, i.e. 10-bit AND 4:4:4. Two of the seven files in
+    the test library are 10-bit, so this is ordinary anime, not an edge case.
+    """
+
+    def _chain(self, height=1080):
+        from pathlib import Path
+
+        from miru_worker.ladder import build_command, renditions_for
+
+        cmd = build_command(
+            "http://laptop:8000/api/stream/1", Path("/tmp/x"),
+            renditions_for(height), "h264_nvenc",
+        )
+        return " ".join(cmd)
+
+    def test_every_encoded_branch_converts_to_nv12(self):
+        chain = self._chain()
+        assert "format=nv12" in chain, (
+            "a 10-bit or 4:4:4 source reaches h264_nvenc unconverted and the "
+            "encoder refuses to open"
+        )
+
+    def test_the_conversion_comes_after_the_scale(self):
+        # Scaling in the source format and converting once at the end is the
+        # cheap order; converting first would scale 8-bit and lose precision
+        # for nothing.
+        chain = self._chain()
+        assert "scale=-2:" in chain
+        for part in chain.split(";"):
+            if "scale=-2:" in part:
+                assert part.index("scale=-2:") < part.index("format=nv12")
+
+    def test_copying_the_video_does_not_convert(self):
+        # A remux never decodes, so there is no frame to convert and adding a
+        # filter would force a needless decode/encode cycle.
+        from pathlib import Path
+
+        from miru_worker.ladder import build_command, renditions_for
+
+        cmd = " ".join(build_command(
+            "http://laptop:8000/api/stream/1", Path("/tmp/x"),
+            renditions_for(1080), "h264_nvenc", copy_video=True,
+        ))
+        assert "format=nv12" not in cmd

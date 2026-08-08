@@ -102,19 +102,28 @@ def usable(items: list[Candidate]) -> list[Candidate]:
     ]
 
 
-def pick_default(items: list[Candidate]) -> Candidate | None:
+def pick_default(items: list[Candidate], prefer_group: str | None = None) -> Candidate | None:
     """The release Miru grabs when the user just says "get it".
 
     Order of preference, most to least important:
       1. viable seeder count — a download that does not finish is not a choice
       2. preferred quality
       3. does not need the PC awake — the thing only Miru can know
-      4. best standing within its own indexer
+      4. the group this show is already being collected from
+      5. best standing within its own indexer
 
     Quality outranks PC-avoidance deliberately, and getting this backwards was
     a real bug: ranking on needs_pc first picked a 480p rip over a 1080p one to
     spare a GPU that exists precisely to be used. Avoiding the PC is a
     tie-breaker *within* a quality tier, not a reason to drop two tiers.
+
+    `prefer_group` is the group of a release of this work that has already been
+    downloaded, and it only breaks ties. Episode 1 from SubsPlease, 2 from
+    Erai-raws and 3 from ToonsHub is one series with three subtitle styles,
+    three naming conventions and three encodes — so once a show has a source,
+    later episodes stay with it. It is a *recommendation* only: nothing is
+    hidden, every group still appears in the full table, and the user picking
+    another release is unaffected.
     """
     pool = usable(items)
     if not pool:
@@ -123,25 +132,38 @@ def pick_default(items: list[Candidate]) -> Candidate | None:
     pct = seeder_percentiles(pool)
     healthy = [c for c in pool if c.seeders >= VIABLE_SEEDERS]
     ranked = healthy or pool
+    wanted = (prefer_group or "").casefold()
 
     return min(
         ranked,
-        key=lambda c: (_quality_rank(c.quality), needs_pc(c.title), -pct[c.id], c.size_bytes),
+        key=lambda c: (
+            _quality_rank(c.quality),
+            needs_pc(c.title),
+            bool(wanted) and (c.group or "").casefold() != wanted,
+            -pct[c.id],
+            c.size_bytes,
+        ),
     )
 
 
-def three_choices(items: list[Candidate]) -> dict[str, Candidate | None]:
+def three_choices(
+    items: list[Candidate], prefer_group: str | None = None
+) -> dict[str, Candidate | None]:
     """Best / Smallest / Best quality — the whole picker.
 
     Each may be None, and any two may be the same release; the UI collapses
     duplicates rather than showing the same row twice under different names.
+
+    Only "best" honours `prefer_group`: Smallest and Best quality are answers to
+    questions the user asked in those words, and quietly returning a different
+    group's release for them would not be answering the question.
     """
     pool = usable(items)
     if not pool:
         return {"best": None, "smallest": None, "best_quality": None}
 
     return {
-        "best": pick_default(pool),
+        "best": pick_default(pool, prefer_group),
         "smallest": min(pool, key=lambda c: (c.size_bytes or 1 << 62)),
         # Highest rung available, best-seeded at that rung. Not necessarily 4K —
         # offering "Best quality" that is the same 1080p as "Best" is honest;

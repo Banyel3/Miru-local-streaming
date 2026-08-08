@@ -316,6 +316,12 @@ export type CatalogWork = {
   kind: "anime" | "movie" | "series";
   title: string;
   year: number | null;
+  /** TV | MOVIE | OVA | ONA | SPECIAL, from the metadata provider. A film in
+   *  the anime rail is told apart by this, not by a fourth kind. */
+  format: string | null;
+  /** The provider's episode count. Only ever used to say "8 of 1,172" — the
+   *  catalogue holds the 8, so the other 1,164 are never rendered as rows. */
+  episode_count: number | null;
   poster_url: string | null;
   overview: string | null;
   score: number | null;

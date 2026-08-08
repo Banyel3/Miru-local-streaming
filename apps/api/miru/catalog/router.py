@@ -75,6 +75,20 @@ def _candidates(releases: list[CatalogRelease]) -> list[Candidate]:
     ]
 
 
+def _collected_group(work: CatalogWork, releases: list[CatalogRelease]) -> str | None:
+    """The release group this show is already being collected from, if any.
+
+    The download job id *is* the infohash (see qbittorrent.py), so the release
+    that was grabbed is the one it names. Only the latest grab is recorded, and
+    that is exactly the affinity wanted: whatever source this show is currently
+    coming from, not every source it ever came from.
+    """
+    return next(
+        (r.release_group for r in releases if r.info_hash == work.download_job_id and r.release_group),
+        None,
+    )
+
+
 def _work_json(w: CatalogWork) -> dict:
     return {
         "id": w.id,
@@ -230,7 +244,7 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
         ).scalars()
     )
     by_hash = {r.info_hash: r for r in releases}
-    choices = three_choices(_candidates(releases))
+    choices = three_choices(_candidates(releases), _collected_group(work, releases))
 
     return {
         **_work_json(work),
@@ -271,7 +285,7 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     if grab.info_hash:
         chosen = next((r for r in releases if r.info_hash == grab.info_hash), None)
     else:
-        picked = three_choices(_candidates(releases))["best"]
+        picked = three_choices(_candidates(releases), _collected_group(work, releases))["best"]
         chosen = next((r for r in releases if picked and r.info_hash == picked.id), None)
 
     if chosen is None:
