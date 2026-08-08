@@ -150,8 +150,7 @@ value goes stale the moment the PC wakes.
 |---|---|---|
 | `available` | Laptop can serve it alone | `direct`, `remux`, `transcode_audio` |
 | `gpu-ready` | Plays normally | `transcode_full`, worker reachable |
-| `waking` | Magic packet sent, PC booting | `transcode_full`, WoL in flight |
-| `unavailable` | *"Needs GPU transcode — PC is asleep"* | `transcode_full`, worker down |
+| `unavailable` | *"Needs GPU transcode — the PC is offline"* | `transcode_full`, worker down |
 
 **Health probe rules.** A ~300 ms TCP check against the worker, cached ~10 s in
 the API process. The library page renders from cache and never blocks on the
@@ -160,56 +159,60 @@ would have played.
 
 ---
 
-## 5. Wake-on-LAN
+## 5. Addressing: Tailscale, not a static IP
 
-Because the laptop is always on and sits on the same LAN as the PC, it can wake
-the PC on demand — including when the request came from your phone on mobile
-data. The magic packet is a layer-2 broadcast and does **not** travel over
-Tailscale; the laptop sends it locally on your behalf.
+**No static IP is needed.** A tailnet address is already stable in a stronger
+sense than a DHCP reservation: it is bound to the machine's identity rather than
+to your router, so it survives lease renewals, router reboots, and either machine
+moving to a different network entirely.
 
-### On the PC (once)
+Use the MagicDNS name rather than the raw address:
 
-1. **BIOS/UEFI** — enable *Wake on LAN* / *Power On by PCI-E*. Also disable ErP /
-   EuP if present, since it cuts standby power to the NIC.
-2. **Windows Device Manager** → your Ethernet adapter → *Properties*:
-   - *Power Management* tab: tick **Allow this device to wake the computer** and
-     **Only allow a magic packet to wake the computer**
-   - *Advanced* tab: set **Wake on Magic Packet** to *Enabled*
-3. **Disable Fast Startup.** Control Panel → Power Options → *Choose what the
-   power buttons do* → untick **Turn on fast startup**. This one is not optional:
-   with Fast Startup on, a shut-down PC will not respond to WoL, because Windows
-   hibernates the NIC rather than leaving it armed.
-4. Get the MAC address:
-   ```powershell
-   Get-NetAdapter | Select-Object Name, MacAddress, Status
+```bash
+MIRU_TRANSCODE_WORKER=http://miru-pc:8001
+```
+
+Two machines on the same LAN connect **directly over the LAN** — Tailscale does
+local peer discovery, so there is no internet hop and no relay. Confirm any pair
+with:
+
+```bash
+tailscale ping miru-pc      # prints "direct" or "via DERP"
+```
+
+A static LAN IP would give you less (home-only) for more work. Skip it.
+
+### The WSL2 wrinkle
+
+This is the part that bites. WSL2 sits behind a NAT inside Windows, so a service
+listening on `:8001` **inside WSL2 is not reachable at the Windows machine's
+tailnet address** by default. Three ways out, best first:
+
+1. **Mirrored networking (recommended, Windows 11).** WSL shares the host's
+   network interfaces outright, so a port bound in WSL2 is reachable on the
+   host's addresses — including the tailnet one. Create `%UserProfile%\.wslconfig`:
+
+   ```ini
+   [wsl2]
+   networkingMode=mirrored
    ```
 
-> **Use Ethernet.** WoWLAN (wake over wifi) is unreliable to nonexistent on
-> desktop wifi cards. If the PC is on wifi, this feature will not work.
+   Then `wsl --shutdown` and restart. Run Tailscale on Windows as normal; nothing
+   else is required. Needs Windows 11 22H2+ and WSL 2.0+.
 
-### On the laptop
+2. **Tailscale inside WSL2.** The WSL instance becomes its own tailnet node with
+   its own name. Works, but it is a second node to authenticate and `tailscaled`
+   has to be started with the distro.
 
-`scripts/wake-pc.sh` sends the packet using nothing but the Python standard
-library — no `wakeonlan` package to install:
+3. **Port proxy from Windows to WSL2.** `netsh interface portproxy` forwarding
+   8001 to the WSL2 IP. Avoid this: WSL2's internal IP changes on every restart,
+   so the rule needs re-creating each boot.
 
-```bash
-MIRU_PC_MAC=AA:BB:CC:DD:EE:FF ./scripts/wake-pc.sh
-```
-
-Set `MIRU_PC_MAC` in `.env` and Miru sends it automatically when a
-`transcode_full` file is requested while the worker is unreachable.
-
-### Verifying
+Verify from the laptop, whichever route you take:
 
 ```bash
-# from the laptop, with the PC asleep
-./scripts/wake-pc.sh
-# then watch for it to come back
-until nc -z 100.x.x.x 8001; do sleep 2; done && echo "worker up"
+curl -m 5 http://miru-pc:8001/health
 ```
-
-Typical wake-to-ready is 15–30 s including WSL2 start. Miru shows `waking`
-during that window instead of a dead end.
 
 ---
 
@@ -241,8 +244,17 @@ are evicted by age.
 
 **PC** — Task Scheduler starts WSL2 at logon, as `SETUP.md` §5 describes; the
 startup script mounts the NFS share, then starts the worker and the downloader.
-Sleep stays **enabled** on the PC — that is the point of Wake-on-LAN. `SETUP.md`
-§6's advice to disable sleep no longer applies.
+
+`SETUP.md` §6's advice to disable sleep still applies **on the PC**, and now for
+a narrower reason: there is no remote wake, so a sleeping PC means
+`transcode_full` files are unavailable until someone walks over to it. Disabling
+sleep is the whole mitigation. The laptop keeps serving everything else
+regardless, so this degrades rather than breaks.
+
+Wake-on-LAN was considered and dropped: it needs the PC on wired Ethernet with
+the NIC armed in BIOS and Fast Startup disabled. Worth revisiting if the PC is
+ever wired — the laptop being wifi-only is not an obstacle, since it would only
+need to *send* a broadcast that the router bridges to the wired segment.
 
 ---
 
@@ -269,5 +281,9 @@ depends on it, and the UI says so plainly. The modular monolith is intact — th
 worker is an ffmpeg wrapper with no database and no domain models, not a second
 Miru.
 
-**Sleep stays enabled on the PC** (was `SETUP.md` §6). Wake-on-LAN replaces
-"never let it sleep" with "wake it when it is actually needed".
+**No static IP anywhere.** Tailscale addresses are stable by identity, so a DHCP
+reservation would be strictly less useful. The real work is WSL2's NAT, handled
+by mirrored networking mode — see §5.
+
+**Wake-on-LAN was dropped**, so `SETUP.md` §6 (disable sleep on the PC) stands
+unchanged. Revisit only if the PC moves to wired Ethernet.
