@@ -15,9 +15,8 @@ file is current. The reversals are recorded in §8.
 │                                          │        │  Windows 11 + WSL2           │
 │  Next.js          :3001                  │        │                              │
 │  FastAPI          :8000   ── HTTP ─────────────>  │  NVENC worker      :8010     │
-│  Postgres         :5432   <───── HLS ───────────  │  prowlarr          :9696
-│                                          │        │  aria2 rpc         :6800     │
-│  media  /mnt/storage                     │        │                              │
+│  Postgres         :5432   <───── HLS ───────────  │  Prowlarr (search) :9696     │
+│  media  /mnt/storage      ── RPC ─────────────>   │  aria2 (download)  :6800     │
 │                                          │  <──── mounts /mnt/storage (NFS)      │
 │  direct · remux                          │        │  anything needing an encoder │
 └──────────────────────────────────────────┘        └──────────────────────────────┘
@@ -55,11 +54,12 @@ The transcode worker takes a **URL**, never a path. This is the single rule that
 keeps the design simple:
 
 - a library file becomes `http://laptop:8000/api/stream/{id}`
-- a live torrent becomes `http://127.0.0.1:5000/api/v1/torrent/video?...`
+- anything else that can be served over HTTP with Range support
 
-Both are just sources. Verified: ffmpeg opened an HTTP source, issued a `206
-Partial Content` to seek two minutes in, and encoded without ever creating a
-local copy. No shared filesystem is required for transcoding.
+Verified: ffmpeg opened an HTTP source, issued a `206 Partial Content` to seek
+two minutes in, and encoded without ever creating a local copy. No shared
+filesystem is required for transcoding. The rule is kept because it costs
+nothing and it is what would make a streaming source possible later.
 
 ---
 
@@ -99,45 +99,42 @@ may well be faster than scanning the PC's own Windows drives.
 
 ---
 
-## 3. Two ways to watch
-
-Acquisition offers an explicit choice rather than one hidden default.
-
-### Download
+## 3. Acquisition
 
 ```
-Miru ──> downloader (PC) ──> writes to /mnt/storage ──> scanner picks it up
-                                                    ──> normal library file
+Miru ──search──> Prowlarr (PC) ──> 500+ indexers incl. nyaa.si
+Miru ──magnet──> aria2   (PC) ──> writes to /mnt/incoming (NFS)
+                                   ──> scan promotes settled entries into /mnt/storage/media
+                                   ──> normal library file
 ```
 
-Behaves like everything else afterwards: instant seek, resume, subtitles,
-next-episode. Costs disk and a wait.
+Downloaded files behave like everything else afterwards: instant seek, resume,
+subtitles, next-episode.
 
-When a download finishes, the file is marked **ready to watch** — Miru does not
-navigate you into the player. Being pulled out of whatever you are doing forty
+Nothing moves out of `incoming/` until it has been still for a settle window and
+carries no partial suffix — aria2 leaves a `.aria2` control file beside an
+unfinished download and removes it on completion, which is the completion signal
+the mover keys off.
+
+When a download finishes the file is marked **ready to watch**. Miru does not
+navigate you into the player; being pulled out of whatever you are doing forty
 minutes later is not a feature.
 
-### Watch Now
+### Watch Now is not available in this stack
 
-```
-Miru ──> PC: downloader streams torrent ──> PC: ffmpeg NVENC ──> HLS ──> Miru ──> browser
-         nothing written to /mnt/storage
-```
+An earlier design offered a choice between *Download* and *Watch Now*, where the
+second transcoded live from the swarm and stored nothing. That depended on
+`movies-downloader`, which streamed torrent bytes over HTTP with Range support.
+That project was dropped because its scrapers no longer work (see `SETUP-PC.md`
+§6), and aria2 replaced it — but **aria2 downloads to disk and cannot serve a
+partial torrent over HTTP**, so there is no longer a live source to transcode
+from.
 
-Starts in seconds and stores nothing durably. The honest constraints:
-
-- **Linear playback is fine.** Torrent streaming is sequential-friendly and this
-  is the case it is good at.
-- **Seeking forward past the downloaded region stalls**, because the byte range
-  ffmpeg asks for maps to pieces the swarm has not delivered yet. Seeking
-  backward is free. The UI should show what is buffered so a stall is
-  predictable rather than mysterious.
-- **"Nothing stored" is not literally true.** `torrent-stream` keeps pieces under
-  `/tmp/torrent-stream/{infoHash}` while streaming. Point that at a tmpfs on the
-  PC if it genuinely must stay off disk, and clean it up when the session ends.
-
-Neither path requires forking Prowlarr + aria2. It already streams over HTTP
-with Range support; it is run upstream and unmodified, bound to `127.0.0.1`.
+Recovering it would need either a torrent client that exposes an HTTP range
+server over an in-progress download, or sequential-order downloading plus a
+Miru endpoint that serves the completed prefix of a growing file. Neither is
+built. This is a capability that was designed and then lost to a dependency
+change, recorded here rather than quietly dropped.
 
 ---
 
