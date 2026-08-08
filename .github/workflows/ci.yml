@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first — no point burning minutes
+# on a commit that has already been superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e "apps/api[dev]"
+
+      # No Postgres service, deliberately. The models declare
+      # JSON().with_variant(JSONB, "postgresql"), so the suite runs on SQLite in
+      # memory and CI stays a single fast job. If a test ever needs Postgres
+      # behaviour specifically, add the service then — not pre-emptively.
+      - name: Test
+        run: pytest -q
+        working-directory: apps/api
+
+  worker:
+    name: Worker tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e "apps/worker[dev]"
+
+      # ffmpeg is not installed here on purpose: the ladder is pure functions
+      # over a dataclass, and encoder detection is required to fall back rather
+      # than crash when ffmpeg is absent. A green run without ffmpeg proves it.
+      - name: Test
+        run: pytest -q
+        working-directory: apps/worker
+
+  web:
+    name: Web types and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+        working-directory: apps/web
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: apps/web
+
+      - name: Build
+        run: npm run build
+        working-directory: apps/web
+        env:
+          # Build-time only. The real values come from .env at run time; these
+          # exist so the build does not fail on an unset public variable.
+          NEXT_PUBLIC_MIRU_STREAM_URL: http://localhost:8000
