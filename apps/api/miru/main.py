@@ -9,6 +9,7 @@ from miru.core.config import settings
 from miru.core.db import create_all
 from miru.acquisition.router import router as acquisition_router
 from miru.catalog import scheduler
+from miru.catalog.posters import router as posters_router
 from miru.catalog.router import router as catalog_router
 from miru.library.router import router as library_router
 from miru.streaming.partial import router as live_router
@@ -41,6 +42,7 @@ app.add_middleware(
 
 app.include_router(acquisition_router)
 app.include_router(catalog_router)
+app.include_router(posters_router)
 app.include_router(library_router)
 app.include_router(streaming_router)
 app.include_router(live_router)

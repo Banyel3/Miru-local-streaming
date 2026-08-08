@@ -333,6 +333,7 @@ export type Wall = {
   refresh_error: string | null;
   rails: CatalogRail[];
   note: string | null;
+  artwork: { tmdb_configured: boolean; films_without_art: number };
 };
 
 export type WorkDetail = CatalogWork & {
@@ -361,6 +362,12 @@ export type ActiveDownload = {
 };
 
 export const getWall = (kind = "all") => get<Wall>(`/api/catalog?kind=${kind}`);
+
+/** Posters are served by our own API, not by the metadata provider: the browser
+ *  makes no third-party requests, and a miss 404s so the card falls back to
+ *  ArtTile rather than rendering a broken frame. */
+export const posterUrl = (work: { poster_url: string | null }) =>
+  work.poster_url ? `${API_PUBLIC}${work.poster_url}` : null;
 
 export const getRailPage = (key: string, kind: string, cursor: string) =>
   get<{ items: CatalogWork[]; next_cursor: string | null }>(

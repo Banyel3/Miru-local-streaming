@@ -50,6 +50,21 @@ class Settings(BaseSettings):
     # How often to ask the indexers what exists. Zero disables the loop, which
     # is what the test suite and CI run with.
     catalog_refresh_seconds: int = 1800
+
+    # Extra searches run on every refresh, alongside the empty browse query.
+    #
+    # Browse returns each indexer's front page, which is whatever the world is
+    # downloading — so anything regional is invisible on the wall no matter how
+    # much of it exists. Measured: "tagalog" returns 257 results and "filipino"
+    # 251, and none of them appear in an unfiltered browse. Naming what you
+    # actually want is the only way it reaches the rails.
+    catalog_queries: str = ""
+
+    # Film artwork. AniList (anime) and TVmaze (series) need no key; TMDB is
+    # the only source with real film coverage and the only one that does.
+    # Without it, films fall back to generated title cards rather than breaking.
+    tmdb_api_key: str = ""
+    poster_cache_path: str = ""
     aria2_secret: str = ""
 
     # Transcode worker on the PC. Empty means no worker: files needing an

@@ -24,8 +24,17 @@ def _run_once() -> dict:
     from miru.catalog.ingest import refresh
     from miru.core.db import SessionLocal
 
+    from miru.catalog.enrich import backfill
+
     with SessionLocal() as db:
-        return refresh(db, provider)
+        out = refresh(db, provider)
+        # Art is filled after ingest, never during it: a slow or unconfigured
+        # metadata provider must not keep releases off the wall.
+        try:
+            out["enriched"] = backfill(db)
+        except Exception:  # noqa: BLE001
+            log.exception("enrichment pass failed")
+        return out
 
 
 async def refresh_now() -> dict:

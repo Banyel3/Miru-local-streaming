@@ -18,6 +18,7 @@ from miru.catalog.classify import classify
 from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
 from miru.catalog.parse import normalised, parse, predict_strategy
 from miru.catalog.rank import Candidate, seeder_percentiles
+from miru.core.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -129,14 +130,30 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     db.add(row)
     db.flush()
 
-    try:
-        results: list[SearchResult] = provider.search("")
-    except Exception as exc:  # noqa: BLE001 — recorded, not swallowed
-        row.error = str(exc)[:512]
+    # The empty query is the indexers' front pages; the configured ones are
+    # whatever this person actually watches. Without the second, anything
+    # regional is invisible on the wall however much of it exists.
+    queries = [""] + [q.strip() for q in (settings.catalog_queries or "").split(",") if q.strip()]
+
+    results: list[SearchResult] = []
+    failures: list[str] = []
+    for q in queries:
+        try:
+            results.extend(provider.search(q))
+        except Exception as exc:  # noqa: BLE001 — recorded, not swallowed
+            failures.append(f"{q or 'browse'}: {exc}")
+            log.warning("catalog query %r failed: %s", q or "browse", exc)
+
+    if not results:
+        row.error = ("; ".join(failures) or "no results")[:512]
         row.finished_at = _now()
         db.commit()
-        log.warning("catalog refresh failed: %s", exc)
         return {"seen": 0, "added": 0, "error": row.error}
+
+    # A partial failure is recorded but does not discard the queries that did
+    # work: one dead indexer should not empty the wall.
+    if failures:
+        row.error = ("; ".join(failures))[:512]
 
     # Classify first: a release we cannot place is not a release we ingest.
     placed: list[tuple[SearchResult, str]] = []

@@ -12,7 +12,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from miru.acquisition.downloader import (
@@ -80,7 +80,9 @@ def _work_json(w: CatalogWork) -> dict:
         "kind": w.kind,
         "title": w.display_title,
         "year": w.year,
-        "poster_url": w.poster_url,
+        # Our own path, not the provider's. The browser makes no third-party
+        # requests, and a miss 404s so the client can fall back to ArtTile.
+        "poster_url": f"/api/posters/{w.id}" if w.poster_url else None,
         "overview": w.overview,
         "score": w.score,
         "release_count": w.release_count,
@@ -141,6 +143,15 @@ def wall(
 
     total = db.execute(select(CatalogWork).limit(1)).scalar_one_or_none()
 
+    # Anime and series get art with no configuration; film needs a TMDB key and
+    # is the only one that does. Without this the film rails look broken next to
+    # the anime rails and nothing says why.
+    films_without_art = db.execute(
+        select(func.count())
+        .select_from(CatalogWork)
+        .where(CatalogWork.kind == "movie", CatalogWork.poster_url.is_(None))
+    ).scalar()
+
     return {
         "kind": kind,
         # False means Download and live search are dead, whatever the wall looks
@@ -156,6 +167,10 @@ def wall(
         "refresh_error": last.error if last else None,
         "rails": out,
         "note": _sparse_note(kind, out),
+        "artwork": {
+            "tmdb_configured": bool(settings.tmdb_api_key),
+            "films_without_art": films_without_art,
+        },
     }
 
 

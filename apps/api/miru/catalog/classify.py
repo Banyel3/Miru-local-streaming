@@ -26,6 +26,12 @@ NYAA_PRIVATE_RANGE = (127720, 134634)
 TV_RANGE = (5000, 5999)
 MOVIE_RANGE = (2000, 2999)
 
+# Checked before anything else, for the same reason anime is checked before
+# movies: indexers dual-tag. An adult release tagged both 6000 XXX and 2000
+# Movies is adult, and letting the Movies tag win would put it on the wall
+# between two films.
+XXX_RANGE = (6000, 6999)
+
 
 def classify(category_ids: list[int]) -> str | None:
     """The kind a release belongs to, or None if it is not video we can place.
@@ -37,6 +43,12 @@ def classify(category_ids: list[int]) -> str | None:
     """
     ids = {int(c) for c in category_ids if c is not None}
     if not ids:
+        return None
+
+    # Excluded outright and first. This is not squeamishness — it is the same
+    # dual-tagging problem measured on Nyaa, and a search for "filipino"
+    # returned 24 of these among 251 results.
+    if any(XXX_RANGE[0] <= i <= XXX_RANGE[1] for i in ids):
         return None
 
     if ids & ANIME_IDS:

@@ -10,6 +10,7 @@ import {
   MediaFile,
   Wall as WallData,
   freshness,
+  posterUrl,
 } from "@/lib/api";
 import { pollDownloads, refreshLibrary } from "@/app/actions";
 import { MediaCard } from "@/components/MediaCard";
@@ -38,6 +39,7 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
   const [ready, setReady] = useState<ActiveDownload | null>(null);
   const [pending, setPending] = useState(false);
   const router = useRouter();
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     setWall(data);
@@ -156,6 +158,10 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
         !wall.pc_reachable && <PcAsleep />
       )}
 
+      {!wall.artwork.tmdb_configured && wall.artwork.films_without_art > 0 && !dismissed && (
+        <NeedsTmdb count={wall.artwork.films_without_art} onDismiss={() => setDismissed(true)} />
+      )}
+
       {wall.empty ? (
         <FirstRun error={wall.refresh_error} />
       ) : (
@@ -233,6 +239,38 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
       )}
 
       {ready && <ReadyToast download={ready} onDismiss={() => setReady(null)} />}
+    </div>
+  );
+}
+
+/**
+ * Said once, above the rails, rather than as a badge on every filmless card.
+ *
+ * Anime and series get art out of the box; film is the only kind that needs a
+ * key, and without saying so the film rails just look broken next to the anime
+ * ones with nothing explaining the difference.
+ */
+function NeedsTmdb({ count, onDismiss }: { count: number; onDismiss: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3">
+      <span className="text-[15px] text-highlight" aria-hidden>
+        ▣
+      </span>
+      <p className="min-w-[220px] flex-1 text-[12.5px] leading-relaxed text-text-dim">
+        <b className="text-text">{count} films have no cover art.</b> Anime and series get
+        theirs automatically; films need a free TMDB key, which takes about a minute.
+      </p>
+      <ButtonLink href="/settings" variant="secondary" size="sm">
+        Add a key
+      </ButtonLink>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="rounded-lg px-2 py-2 text-text-muted hover:text-text"
+      >
+        ×
+      </button>
     </div>
   );
 }
@@ -324,7 +362,7 @@ function Hero({
     >
       {work.poster_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={work.poster_url} alt="" className="absolute inset-0 size-full object-cover opacity-45" />
+        <img src={posterUrl(work) ?? undefined} alt="" className="absolute inset-0 size-full object-cover opacity-45" />
       )}
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.06]"

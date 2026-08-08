@@ -49,6 +49,50 @@ export default async function SettingsPage() {
         </dl>
       </section>
 
+      <section className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-6">
+        <h3 className="text-[15px] font-bold">Artwork</h3>
+        <p className="text-sm leading-relaxed text-text-dim">
+          Anime covers come from AniList and series covers from TVmaze. Neither needs a key
+          and both work out of the box. Films are the exception: TMDB is the only source
+          with real film coverage, and it is the only one that asks for a key.
+        </p>
+        <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-text-dim">
+          <li>
+            Make a free account at{" "}
+            <a
+              href="https://www.themoviedb.org/settings/api"
+              target="_blank"
+              rel="noreferrer"
+              className="font-bold text-highlight underline underline-offset-2"
+            >
+              themoviedb.org/settings/api
+            </a>{" "}
+            and copy the API Read Access key.
+          </li>
+          <li>
+            Put it in <code>.env</code> as <FactChip>MIRU_TMDB_API_KEY</FactChip>.
+          </li>
+          <li>Restart the API. Covers fill in on the next refresh, a few dozen at a time.</li>
+        </ol>
+        <p className="text-[12.5px] text-text-muted">
+          Without it nothing breaks — films keep their generated title cards.
+        </p>
+      </section>
+
+      <section className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-6">
+        <h3 className="text-[15px] font-bold">What the wall looks for</h3>
+        <p className="text-sm leading-relaxed text-text-dim">
+          Browsing returns each indexer&rsquo;s front page, which is whatever the world is
+          downloading — so anything regional never reaches the rails on its own. The terms
+          in <FactChip>MIRU_CATALOG_QUERIES</FactChip> are searched on every refresh and
+          their results land in the catalogue like anything else.
+        </p>
+        <p className="text-[12.5px] text-text-muted">
+          Currently seeded with <FactChip>tagalog</FactChip> <FactChip>filipino</FactChip>{" "}
+          <FactChip>pinoy</FactChip>. Add your own, comma separated.
+        </p>
+      </section>
+
       <ScanPanel disabled={!health} />
 
       <section className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-6">

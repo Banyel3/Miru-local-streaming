@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ActiveDownload, CatalogWork, clock } from "@/lib/api";
+import { useState } from "react";
+import { ActiveDownload, CatalogWork, clock, posterUrl } from "@/lib/api";
 import { ArtTile, MicroChip, ProgressBar } from "@/components/ui";
 import { Check, Play } from "@/components/icons";
 
@@ -25,6 +26,12 @@ export function CatalogCard({
   pcReachable: boolean;
   onOpen: (work: CatalogWork) => void;
 }) {
+  // A poster can 404 after the row said it had one — the cache fetch runs
+  // lazily and the provider can be down. Falling back to the tile is the whole
+  // reason the proxy 404s instead of serving a placeholder.
+  const [artFailed, setArtFailed] = useState(false);
+  const art = artFailed ? null : posterUrl(work);
+
   const owned = work.library_file_id !== null;
   const busy = download && download.state !== "failed" && !download.in_library;
   const failed = download?.state === "failed";
@@ -79,17 +86,18 @@ export function CatalogCard({
     <>
       <ArtTile
         seed={work.title}
-        label={work.poster_url ? undefined : work.title}
+        label={art ? undefined : work.title}
         className={`aspect-2/3 rounded-[11px] transition-opacity ${
           pcReachable || owned ? "" : "opacity-55"
         }`}
       >
-        {work.poster_url && (
+        {art && (
           // eslint-disable-next-line @next/next/no-img-element -- proxied and
           // cached by the API; next/image would add a second cache for nothing.
           <img
-            src={work.poster_url}
+            src={art}
             alt=""
+            onError={() => setArtFailed(true)}
             className="absolute inset-0 size-full object-cover"
             loading="lazy"
           />
