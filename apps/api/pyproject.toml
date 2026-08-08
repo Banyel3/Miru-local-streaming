@@ -13,6 +13,12 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    # Release-name parsing. anitopy is the Python port of Anitomy, which is what
+    # anime clients use for the "[Group] Title - 01 [1080p][HASH]" shape;
+    # guessit handles scene and p2p naming. Each is poor at the other's shape,
+    # so they are routed by kind rather than chained.
+    "anitopy>=2.1",
+    "guessit>=3.8",
 ]
 
 [project.optional-dependencies]

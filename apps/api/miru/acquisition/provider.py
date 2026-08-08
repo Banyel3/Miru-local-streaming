@@ -38,6 +38,10 @@ class SearchResult:
     magnet: str | None
     download_url: str | None
     categories: list[str] = field(default_factory=list)
+    # Ids, not just names. Classification runs on these because the live
+    # instance returns category objects carrying an id and no name at all
+    # ({"id": 131088}), so a name-based rule drops them silently.
+    category_ids: list[int] = field(default_factory=list)
     imdb_id: str | None = None
     tmdb_id: int | None = None
     tvdb_id: int | None = None

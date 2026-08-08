@@ -111,6 +111,9 @@ class ProwlarrAria2Provider:
             magnet=magnet,
             download_url=r.get("downloadUrl"),
             categories=[c.get("name") for c in (r.get("categories") or []) if c.get("name")],
+            category_ids=[
+                int(c["id"]) for c in (r.get("categories") or []) if c.get("id") is not None
+            ],
             imdb_id=str(r["imdbId"]) if r.get("imdbId") else None,
             tmdb_id=r.get("tmdbId") or None,
             tvdb_id=r.get("tvdbId") or None,

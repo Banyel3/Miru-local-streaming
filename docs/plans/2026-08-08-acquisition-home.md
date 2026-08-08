@@ -720,6 +720,33 @@ forgery shape the transcode worker already has to defend against with
 third-party API response, so the allowlist is what stops that API from choosing
 what our server fetches.
 
+### D26. Watch Now becomes real streaming in M5c
+
+D4 defined Watch Now as *download, then play on its own*, on the grounds that a
+partial torrent cannot be streamed. Checked against the running aria2 1.37.0,
+that grounds is narrower than it was written: aria2's only in-order option is
+`stream-piece-selector`, which is HTTP/FTP-only and does nothing for BitTorrent.
+There is no sequential download for torrents in aria2. The limitation is
+**aria2's, not the format's**.
+
+qBittorrent has sequential download and first-and-last-piece-first, and
+`qbittorrent-nox` exposes a Web API and runs headless in WSL the same way aria2
+does. Swapping it in is one new implementation behind the `AcquisitionProvider`
+Protocol that already exists (`search` / `submit` / `status` / `cancel`), so
+nothing in the wall changes.
+
+It lands as **M5c**, after M5a, because it changes the PC runbook and none of
+the wall depends on it. What it buys, bounded honestly: Watch Now goes from
+"play in twenty minutes" to "play in about thirty seconds" for the `direct` and
+`remux` rungs — most of an anime library. It does **not** cover
+`transcode_full`; the worker pulls the source and runs ffmpeg over it, and an
+incomplete file makes ffmpeg reach EOF and stop early. It also needs a
+buffered-enough gate, because a swarm slower than the video bitrate stalls, and
+a Play button that stalls is exactly what D4 and §2.4 both refused.
+
+Nothing here changes M5a. D4's button, its states and its copy all stand; M5c
+only shortens the wait behind it. Full reasoning in `DEPLOYMENT.md` §3.
+
 ### Redis — the answer is no
 
 The question that opened this plan. §6 gives the reasoning and the CEO pass

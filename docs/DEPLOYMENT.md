@@ -136,6 +136,32 @@ Miru endpoint that serves the completed prefix of a growing file. Neither is
 built. This is a capability that was designed and then lost to a dependency
 change, recorded here rather than quietly dropped.
 
+**Update, 2026-08-08 — the second option is being taken.** Checked against the
+running instance: aria2 1.37.0 offers `stream-piece-selector`, but the option is
+documented and implemented for HTTP/FTP downloads only and does nothing for
+BitTorrent. There is no sequential-download for torrents in aria2 at all, which
+makes the limitation above **specific to aria2 rather than to torrents**.
+
+qBittorrent's libtorrent backend has real sequential download plus
+first-and-last-piece-first, and `qbittorrent-nox` exposes a Web API and runs
+headless in WSL exactly as aria2 does. Because Miru already serves files from
+disk over HTTP Range, a sequentially-filled file is playable from the front
+while it is still growing: no new subsystem, just the existing streaming path
+pointed at an incomplete file with seeking capped at the completed prefix.
+
+Scheduled as **M5c**, after the browse wall (M5a). Scope, honestly bounded:
+
+- Works for the `direct` and `remux` rungs, which are most of an anime library.
+- Does **not** work for `transcode_full`. The worker pulls the source and runs
+  ffmpeg over it; handed an incomplete file, ffmpeg reaches EOF and stops early.
+- Needs a buffered-enough gate before playback starts. A swarm slower than the
+  video bitrate stalls, and a Play button that stalls is the thing this design
+  has refused twice already.
+
+A piece-proxy (webtorrent/peerflix) that never writes a complete file was
+considered and rejected: it is a separate service, and Miru is a library, so
+bytes on disk are the goal rather than the cost.
+
 ---
 
 ## 4. Availability in the UI
