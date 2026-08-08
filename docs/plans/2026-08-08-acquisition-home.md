@@ -129,28 +129,32 @@ if TMDB is slow.
 A work with no artwork still shows, with a generated title card. Missing a
 poster must not mean missing from the catalog.
 
-### 2.4 Watch Now does not exist here, and the UI must not imply it
+### 2.4 Streaming an unfinished download is not possible
+
+> **Superseded in part by D4.** This section's *constraint* stands; the
+> conclusion it originally drew — delete the Watch Now button — was reversed by
+> the design review. Read D4 for what the button actually does.
 
 `DEPLOYMENT.md` §3 already records that Watch Now was lost when movies-downloader
 was dropped: aria2 writes to disk and cannot stream a torrent that is still
-arriving. Nothing in this plan changes that. A card for something not yet
-acquired can offer exactly one action, and calling it *Watch Now* would be a
-promise the system cannot keep.
+arriving. Nothing in this plan changes that, and nothing here fakes it —
+`aria2 --bt-prioritize-piece=head,tail` biases piece order without guaranteeing a
+playable prefix, and a play button that works for some files and stalls on others
+is worse than one that is honest about waiting.
 
-The card's primary action is therefore state-dependent, reusing the availability
-vocabulary the library already speaks:
+What follows from the constraint is only that **playback cannot begin
+immediately**. It does not follow that the user must think about downloads, which
+is what D4 fixes.
+
+The card's action is state-dependent, reusing the availability vocabulary the
+library already speaks:
 
 | state | action |
 |---|---|
 | already in the library | **Play** — straight to the player |
 | downloading | progress with percentage and ETA, cancel available |
-| not acquired | **Download**, opening the release picker |
+| not acquired | **Watch Now** (download, then play on its own) or **Download** — D4 |
 | acquired but needs the PC, PC asleep | **Play** shown disabled with the existing offline note |
-
-`aria2 --bt-prioritize-piece=head,tail` is deliberately *not* being used to fake
-early playback. It biases piece order but does not guarantee a playable prefix,
-and a play button that works for some files and stalls for others is worse than
-one that appears when the file is ready.
 
 ---
 
