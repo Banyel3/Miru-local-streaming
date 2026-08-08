@@ -14,6 +14,7 @@ import {
 import { pollDownloads, refreshLibrary } from "@/app/actions";
 import { MediaCard } from "@/components/MediaCard";
 import { Rail } from "@/components/Rail";
+import { WallSearch } from "@/components/WallSearch";
 import { ReleaseSheet } from "@/components/ReleaseSheet";
 import { Button, ButtonLink, EmptyState, SectionHeading, artTint } from "@/components/ui";
 import { Play } from "@/components/icons";
@@ -135,11 +136,18 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
           ))}
         </div>
 
-        <span
-          className={`ml-auto text-[12px] ${wall.refresh_error ? "text-accent" : "text-text-muted"}`}
-        >
-          {pending ? "Loading…" : freshness(wall.refreshed_at, wall.refresh_error)}
-        </span>
+        <div className="ml-auto flex min-w-[200px] flex-1 items-center justify-end gap-3 sm:flex-none sm:min-w-[280px]">
+          <span
+            className={`hidden text-[12px] whitespace-nowrap lg:inline ${
+              wall.refresh_error ? "text-accent" : "text-text-muted"
+            }`}
+          >
+            {pending ? "Loading…" : freshness(wall.refreshed_at, wall.refresh_error)}
+          </span>
+          <div className="min-w-0 flex-1 sm:w-[240px] sm:flex-none">
+            <WallSearch />
+          </div>
+        </div>
       </div>
 
       {!wall.downloader_configured ? (

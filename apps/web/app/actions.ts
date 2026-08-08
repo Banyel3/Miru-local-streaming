@@ -149,3 +149,24 @@ export async function makeWatchable(infoHash: string): Promise<{ ok: true } | { 
     return { error: "Can't reach the API." };
   }
 }
+
+/** Grab something straight off a live search, which has no catalog work behind
+ *  it yet. The refresh will pick it up on its next pass. */
+export async function startDownloadDirect(
+  resultId: string,
+  watch: boolean,
+): Promise<{ jobId: string } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/acquisition/download`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result_id: resultId, watch }),
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { error: body?.detail ?? `The download was refused (HTTP ${res.status}).` };
+    return { jobId: body.job_id };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}

@@ -408,3 +408,17 @@ export function episodeLabel(r: CatalogRelease) {
   }
   return `Episode ${r.episode}`;
 }
+
+export type SearchResult = {
+  id: string;
+  title: string;
+  indexer: string;
+  size_bytes: number;
+  seeders: number;
+  leechers: number;
+  age_days: number;
+  info_hash: string | null;
+};
+
+export const searchIndexers = (q: string) =>
+  get<SearchResult[]>(`/api/acquisition/search?q=${encodeURIComponent(q)}`);
