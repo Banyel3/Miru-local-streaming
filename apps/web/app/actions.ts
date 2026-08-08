@@ -71,14 +71,14 @@ export async function loadWork(id: number): Promise<{ work: WorkDetail } | { err
 
 export async function startDownload(
   workId: number,
-  releaseGuid: string | null,
+  infoHash: string | null,
   watch: boolean,
 ): Promise<{ jobId: string } | { error: string }> {
   try {
     const res = await fetch(`${API_INTERNAL}/api/catalog/works/${workId}/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ release_guid: releaseGuid, watch }),
+      body: JSON.stringify({ info_hash: infoHash, watch }),
       cache: "no-store",
     });
     const body = await res.json().catch(() => null);

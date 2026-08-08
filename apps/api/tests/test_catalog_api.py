@@ -6,6 +6,28 @@ from tests.test_catalog_ingest import NYAA_CATS, TPB_TV_CATS, YTS_CATS, FakeProv
 from miru.catalog.ingest import refresh
 
 
+class FakeDownloader:
+    """Stands in for whichever backend is configured.
+
+    `sequential` is captured rather than ignored: it is the whole difference
+    between Watch Now meaning "in a moment" and meaning "when it finishes".
+    """
+
+    def __init__(self, status=None, fail_status=None):
+        self.submitted = []
+        self._status = status
+        self._fail = fail_status
+
+    def submit(self, magnet, *, sequential=False):
+        self.submitted.append((magnet, sequential))
+        return type("J", (), {"id": "gid1", "result_id": magnet})()
+
+    def status(self, job_id):
+        if self._fail:
+            raise self._fail
+        return self._status
+
+
 @pytest.fixture
 def filled(db_session):
     """A catalog shaped like a real one: plenty of anime, thin on TV."""
@@ -141,19 +163,72 @@ class TestStartingADownload:
     def test_downloading_with_no_choice_picks_for_the_user(self, client, filled, monkeypatch):
         import miru.catalog.router as mod
 
+        fake = FakeDownloader()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
-        monkeypatch.setattr(mod.provider, "submit", lambda rid: type("J", (), {"id": "gid1"})())
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
 
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         b = client.post(f"/api/catalog/works/{wid}/download", json={}).json()
         assert b["job_id"] == "gid1"
         assert b["release"]["grabbable"] is True
 
+    def test_the_grab_is_built_from_the_infohash_not_the_stored_link(
+        self, client, filled, monkeypatch
+    ):
+        # Prowlarr re-encrypts its links every response, so the one on the row
+        # may already be dead by the time anyone clicks.
+        import miru.catalog.router as mod
+
+        fake = FakeDownloader()
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
+
+        wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
+        client.post(f"/api/catalog/works/{wid}/download", json={})
+        magnet, _ = fake.submitted[0]
+        assert magnet.startswith("magnet:?xt=urn:btih:")
+        assert "&tr=" in magnet          # trackers, so peers arrive in seconds
+
+    def test_watch_now_asks_for_sequential_pieces_and_download_does_not(
+        self, client, filled, monkeypatch
+    ):
+        # The whole point of the downloader swap: intent decides piece order.
+        import miru.catalog.router as mod
+
+        fake = FakeDownloader()
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
+        monkeypatch.setattr(mod, "supports_streaming", lambda: True)
+
+        wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
+        client.post(f"/api/catalog/works/{wid}/download", json={"watch": True})
+        client.post(f"/api/catalog/works/{wid}/download", json={"watch": False})
+        assert [seq for _, seq in fake.submitted] == [True, False]
+
+    def test_a_backend_that_cannot_stream_says_so_rather_than_promising(
+        self, client, filled, monkeypatch
+    ):
+        # With aria2 configured, Watch Now can only mean "when it finishes", and
+        # the response has to admit that so the UI does not promise otherwise.
+        import miru.catalog.router as mod
+
+        fake = FakeDownloader()
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
+        monkeypatch.setattr(mod, "supports_streaming", lambda: False)
+
+        wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
+        b = client.post(f"/api/catalog/works/{wid}/download", json={"watch": True}).json()
+        assert b["streaming"] is False
+        assert fake.submitted[0][1] is False
+
     def test_the_job_id_is_stored_so_a_reload_does_not_lose_it(self, client, filled, monkeypatch):
         import miru.catalog.router as mod
 
+        fake = FakeDownloader()
+        fake.submit = lambda magnet, **kw: type("J", (), {"id": "gid7"})()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
-        monkeypatch.setattr(mod.provider, "submit", lambda rid: type("J", (), {"id": "gid7"})())
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
 
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         client.post(f"/api/catalog/works/{wid}/download", json={})
@@ -169,17 +244,14 @@ class TestPollingDownloads:
         import miru.catalog.router as mod
         from miru.acquisition.provider import DownloadStatus
 
+        fake = FakeDownloader(
+            status=DownloadStatus(id="gid1", state="downloading", progress=0.41,
+                                  speed_bps=8_200_000, eta_seconds=180)
+        )
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
-        monkeypatch.setattr(mod.provider, "submit", lambda rid: type("J", (), {"id": "g"})())
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         client.post(f"/api/catalog/works/{wid}/download", json={})
-
-        monkeypatch.setattr(
-            mod.provider,
-            "status",
-            lambda jid: DownloadStatus(id=jid, state="downloading", progress=0.41,
-                                       speed_bps=8_200_000, eta_seconds=180),
-        )
         b = client.get("/api/catalog/downloads").json()["downloads"]
         assert len(b) == 1
         assert b[0]["state"] == "downloading" and b[0]["progress"] == 0.41
@@ -191,16 +263,12 @@ class TestPollingDownloads:
         self, client, filled, monkeypatch
     ):
         import miru.catalog.router as mod
-        from miru.acquisition.prowlarr import AcquisitionError
+        from miru.acquisition.provider import AcquisitionError
 
+        fake = FakeDownloader(fail_status=AcquisitionError("no such gid"))
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
-        monkeypatch.setattr(mod.provider, "submit", lambda rid: type("J", (), {"id": "g"})())
+        monkeypatch.setattr(mod, "downloader", lambda: fake)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         client.post(f"/api/catalog/works/{wid}/download", json={})
-
-        def boom(jid):
-            raise AcquisitionError("no such gid")
-
-        monkeypatch.setattr(mod.provider, "status", boom)
         b = client.get("/api/catalog/downloads").json()["downloads"]
         assert b[0]["state"] == "failed" and "no such gid" in b[0]["error"]

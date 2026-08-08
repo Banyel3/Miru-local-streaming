@@ -18,6 +18,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 
+class AcquisitionError(RuntimeError):
+    """Anything that went wrong past this boundary.
+
+    One type on purpose: callers turn it into a 502 and a sentence, and they
+    should not have to know which downloader is configured to do that.
+    """
+
+
 @dataclass
 class SearchResult:
     """One release, from whichever indexer found it.

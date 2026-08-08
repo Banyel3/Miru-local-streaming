@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from miru.acquisition.prowlarr import AcquisitionError, provider
+from miru.acquisition.downloader import downloader, reachable, supports_streaming
+from miru.acquisition.provider import AcquisitionError
 from miru.catalog import rails
 from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
 from miru.catalog.rank import Candidate, all_viable_dead, three_choices
@@ -35,10 +36,10 @@ _PC_TTL = 20.0
 def pc_reachable() -> bool:
     """Whether the PC can take a download right now.
 
-    aria2, Prowlarr and the transcode worker all live on the PC. The wall is
-    served from the laptop's Postgres, so it renders perfectly while every
-    Download button would fail. Without this the page looks completely healthy
-    and every action 502s.
+    The downloader, Prowlarr and the transcode worker all live on the PC. The
+    wall is served from the laptop's Postgres, so it renders perfectly while
+    every Download button would fail. Without this the page looks completely
+    healthy and every action 502s.
     """
     global _pc_state
     checked, ok = _pc_state
@@ -46,15 +47,7 @@ def pc_reachable() -> bool:
     if now - checked < _PC_TTL:
         return ok
 
-    ok = False
-    if settings.aria2_url:
-        try:
-            from miru.acquisition.prowlarr import _rpc
-
-            _rpc("aria2.getVersion", [])
-            ok = True
-        except Exception:  # noqa: BLE001 — unreachable is the answer, not an error
-            ok = False
+    ok = reachable()
     _pc_state = (now, ok)
     return ok
 
@@ -249,7 +242,16 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
         # Built from the infohash rather than the stored link: Prowlarr's proxy
         # URL carries a payload it regenerates every response, so the one on
         # this row may already be dead.
-        job = provider.submit(chosen.magnet_uri)
+        # `watch` is the user's intent, and it is the only thing that decides
+        # piece order. Watch Now asks for sequential pieces so playback can
+        # start before the last one lands; Download leaves libtorrent's normal
+        # rarest-first selection alone, which is better for the swarm and for
+        # total throughput.
+        dl = downloader()
+        if supports_streaming():
+            job = dl.submit(chosen.magnet_uri, sequential=grab.watch)
+        else:
+            job = dl.submit(chosen.magnet_uri)
     except AcquisitionError as exc:
         raise HTTPException(502, str(exc)) from exc
 
@@ -259,7 +261,13 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     work.download_job_id = job.id
     db.commit()
 
-    return {"job_id": job.id, "release": _release_json(chosen), "watch": grab.watch}
+    return {
+        "job_id": job.id,
+        "release": _release_json(chosen),
+        "watch": grab.watch,
+        # False means Watch Now can only honestly mean "when it finishes".
+        "streaming": supports_streaming(),
+    }
 
 
 @router.get("/downloads")
@@ -274,12 +282,12 @@ def downloads(db: Session = Depends(get_db)):
         db.execute(select(CatalogWork).where(CatalogWork.download_job_id.isnot(None))).scalars()
     )
     if not works:
-        return {"pc_reachable": pc_reachable(), "downloads": []}
+        return {"pc_reachable": pc_reachable(), "streaming": supports_streaming(), "downloads": []}
 
     out = []
     for w in works:
         try:
-            s = provider.status(w.download_job_id)
+            s = downloader().status(w.download_job_id)
         except AcquisitionError as exc:
             # A job the downloader has forgotten is not an error worth failing
             # the whole poll over — the card shows it as failed and offers the
@@ -313,4 +321,4 @@ def downloads(db: Session = Depends(get_db)):
                 "in_library": w.library_file_id is not None,
             }
         )
-    return {"pc_reachable": pc_reachable(), "downloads": out}
+    return {"pc_reachable": pc_reachable(), "streaming": supports_streaming(), "downloads": out}

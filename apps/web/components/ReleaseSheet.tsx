@@ -97,7 +97,7 @@ export function ReleaseSheet({
         if ("error" in res) return setError("Couldn't load the releases for this.");
         const d = res.work;
         setDetail(d);
-        setChosen(d.choices.best?.guid ?? d.releases.find((r) => r.grabbable)?.guid ?? null);
+        setChosen(d.choices.best?.info_hash ?? d.releases.find((r) => r.grabbable)?.info_hash ?? null);
       })
       .catch(() => live && setError("Couldn't load the releases for this."));
     return () => {
@@ -133,8 +133,8 @@ export function ReleaseSheet({
   // different names makes the picker look broken.
   const seen = new Set<string>();
   const choices = Object.entries(detail?.choices ?? {}).filter(([, r]) => {
-    if (!r || seen.has(r.guid)) return false;
-    seen.add(r.guid);
+    if (!r || seen.has(r.info_hash)) return false;
+    seen.add(r.info_hash);
     return true;
   }) as [string, CatalogRelease][];
 
@@ -201,8 +201,8 @@ export function ReleaseSheet({
             key={name}
             name={name}
             release={r}
-            selected={chosen === r.guid}
-            onSelect={() => setChosen(r.guid)}
+            selected={chosen === r.info_hash}
+            onSelect={() => setChosen(r.info_hash)}
           />
         ))}
 
@@ -228,10 +228,10 @@ export function ReleaseSheet({
                 <tbody>
                   {detail.releases.map((r) => (
                     <tr
-                      key={r.guid}
-                      onClick={() => r.grabbable && !r.stale && setChosen(r.guid)}
+                      key={r.info_hash}
+                      onClick={() => r.grabbable && !r.stale && setChosen(r.info_hash)}
                       className={`cursor-pointer border-b border-border ${
-                        chosen === r.guid ? "bg-primary/10" : ""
+                        chosen === r.info_hash ? "bg-primary/10" : ""
                       } ${r.stale || !r.grabbable ? "opacity-45 line-through" : ""}`}
                     >
                       <td className="max-w-[260px] truncate px-2 py-1.5 text-text-dim" title={r.title}>
@@ -262,7 +262,7 @@ export function ReleaseSheet({
         <footer className="flex flex-wrap items-center gap-3 border-t border-border pt-3.5">
           <p className="min-w-[180px] flex-1 text-[11.5px] text-text-muted">
             {chosen && detail
-              ? episodeLabel(detail.releases.find((r) => r.guid === chosen)!) ??
+              ? episodeLabel(detail.releases.find((r) => r.info_hash === chosen)!) ??
                 "Downloads to the PC, then moves itself into your library."
               : "Downloads to the PC, then moves itself into your library."}
           </p>

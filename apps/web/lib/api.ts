@@ -290,7 +290,9 @@ export type CatalogWork = {
 };
 
 export type CatalogRelease = {
-  guid: string;
+  /** The torrent's own identity. Prowlarr's guid changes on every response, so
+   *  it is not something the UI can select by. */
+  info_hash: string;
   title: string;
   indexer: string;
   quality: string | null;

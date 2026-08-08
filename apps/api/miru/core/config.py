@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     # broken: the API reports it unconfigured instead of failing at search time.
     prowlarr_url: str = ""
     prowlarr_api_key: str = ""
+    # Which downloader actually runs. qBittorrent is the default because it is
+    # the only one of the two that can be watched while it is still arriving:
+    # aria2 has no sequential download for BitTorrent at all. Set to "aria2" to
+    # fall back — one environment variable rather than a migration.
+    downloader: str = "qbittorrent"
+
+    qbittorrent_url: str = ""
+    qbittorrent_user: str = "admin"
+    qbittorrent_password: str = ""
+    # Left empty so qBittorrent's own configured save path wins, the same way
+    # aria2's does. Miru never names a directory that lives on another machine.
+    qbittorrent_save_path: str = ""
+
     aria2_url: str = ""
     # How often to ask the indexers what exists. Zero disables the loop, which
     # is what the test suite and CI run with.

@@ -13,16 +13,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from miru.acquisition.provider import DownloadJob, DownloadStatus, SearchResult
+from miru.acquisition.provider import (
+    AcquisitionError,
+    DownloadJob,
+    DownloadStatus,
+    SearchResult,
+)
 from miru.core.config import settings
 
 log = logging.getLogger(__name__)
 
 TIMEOUT_S = 45.0
-
-
-class AcquisitionError(RuntimeError):
-    pass
 
 
 def _get_json(url: str, headers: dict[str, str] | None = None):
