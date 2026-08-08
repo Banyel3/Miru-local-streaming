@@ -436,3 +436,94 @@ until someone wakes it — everything the laptop can serve keeps working.
 | Worker returns 502 on first play | ffmpeg exited; the error body carries its stderr tail |
 | Downloads never appear in Miru | The downloader is writing to the PC's own disk, not `/mnt/storage` |
 | Everything unavailable, worker is up | `MIRU_PUBLIC_API_URL` is `localhost` — that points the PC at itself |
+
+---
+
+## 9. qBittorrent — the downloader that can be watched while it downloads
+
+Miru's default downloader is now qBittorrent rather than aria2, because it is
+the only one of the two that can produce a watchable partial file. Checked
+against the running instance: aria2 1.37's `stream-piece-selector` is
+implemented for HTTP and FTP only and does nothing for BitTorrent, so a file
+aria2 is fetching cannot be played until the last piece lands.
+
+aria2 does not have to be uninstalled. It stays selectable with
+`MIRU_DOWNLOADER=aria2`. But **only run one of them at a time** — two torrent
+clients can both end up writing the same file, and that is corruption rather
+than an inconvenience.
+
+### Install (in WSL on the PC, not in a Docker Desktop VM)
+
+```bash
+sudo apt update
+sudo apt install -y qbittorrent-nox
+```
+
+Run it once in the foreground to accept the licence prompt and read the
+temporary password it prints:
+
+```bash
+qbittorrent-nox
+# ***** legal notice *****  → type: y
+# "A temporary password is provided for this session: xxxxxxxx"
+```
+
+Then stop it with Ctrl-C.
+
+### Configure
+
+The Web UI is on **8080** by default, which is a different port from the
+BitTorrent listen port. Open it from the laptop over Tailscale:
+
+```
+http://100.67.44.13:8080
+```
+
+In **Tools → Options**:
+
+| Setting | Value | Why |
+|---|---|---|
+| Downloads → Default Save Path | `/mnt/laptop-incoming` | the laptop's `incoming` over NFS, same target aria2 used |
+| Downloads → Keep incomplete torrents in | *unset* | a second directory means Miru cannot find the growing file |
+| WebUI → Bypass authentication for clients on localhost | **off** | it is reachable over the tailnet, not just localhost |
+| WebUI → Username / Password | set them | goes into `MIRU_QBITTORRENT_*` on the laptop |
+| BitTorrent → Torrent Queueing | **off** | Miru decides what runs; a queue silently defers a Watch Now |
+| Connection → Listening Port | any, forwarded if you can | affects speed, not correctness |
+
+Do **not** turn on global sequential download. Miru sets it per torrent from the
+button pressed: Watch Now asks for sequential pieces, Download leaves
+libtorrent's rarest-first order alone, which is better for the swarm and for
+throughput.
+
+### Tell Miru about it
+
+On the **laptop**, in `.env`:
+
+```bash
+MIRU_DOWNLOADER=qbittorrent
+MIRU_QBITTORRENT_URL=http://100.67.44.13:8080
+MIRU_QBITTORRENT_USER=admin
+MIRU_QBITTORRENT_PASSWORD=<what you set above>
+```
+
+Restart the API and check the wall: the strip at the top should disappear. If it
+still says *"No downloader set up yet"* the URL or credentials are wrong; if it
+says *"The PC is asleep"* the credentials are fine and qbittorrent-nox is not
+running.
+
+### Start it with the rest
+
+`qbittorrent-nox -d` daemonises. Add it beside aria2 in whatever starts the PC
+side, and note that **reboot survival is still an open problem on both machines**
+— see `STATE.md`.
+
+### What watch-while-downloading actually covers
+
+| release | works? |
+|---|---|
+| `direct` / `remux` — H.264, most of an anime library | **yes**, playback starts once ~24 MB of the front has landed |
+| `transcode_full` — HEVC, 4K | **no.** The worker runs ffmpeg over the source, and an incomplete file makes ffmpeg reach EOF and stop early |
+
+The release picker already labels which is which before you commit to the
+download, so this is visible at the point of choosing rather than discovered
+afterwards.

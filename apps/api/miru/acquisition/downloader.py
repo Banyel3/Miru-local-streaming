@@ -36,6 +36,21 @@ def supports_streaming() -> bool:
     return settings.downloader != "aria2"
 
 
+def configured() -> bool:
+    """Whether a downloader has been set up at all.
+
+    Distinct from reachable() on purpose, and the distinction is one this
+    project has already learned once with the transcode worker: "the PC is
+    asleep" and "you never installed this" are different problems with
+    different fixes, and collapsing them sends the user to wake a machine that
+    is already awake.
+    """
+    try:
+        return downloader().configured()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def reachable() -> bool:
     """Whether the download backend is answering right now."""
     try:

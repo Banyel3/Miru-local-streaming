@@ -142,7 +142,11 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
         </span>
       </div>
 
-      {!wall.pc_reachable && <PcAsleep />}
+      {!wall.downloader_configured ? (
+        <NoDownloader />
+      ) : (
+        !wall.pc_reachable && <PcAsleep />
+      )}
 
       {wall.empty ? (
         <FirstRun error={wall.refresh_error} />
@@ -221,6 +225,23 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
       )}
 
       {ready && <ReadyToast download={ready} onDismiss={() => setReady(null)} />}
+    </div>
+  );
+}
+
+function NoDownloader() {
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3">
+      <span className="text-[15px] text-highlight" aria-hidden>
+        ↓
+      </span>
+      <p className="min-w-[200px] flex-1 text-[12.5px] leading-relaxed text-text-dim">
+        <b className="text-text">No downloader set up yet.</b> Browsing works. Install
+        qBittorrent on the PC to download and to watch while downloading.
+      </p>
+      <ButtonLink href="/settings" variant="secondary" size="sm">
+        How to set it up
+      </ButtonLink>
     </div>
   );
 }

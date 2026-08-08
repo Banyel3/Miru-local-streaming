@@ -105,3 +105,47 @@ export async function pollDownloads(): Promise<
     return { error: "unreachable" };
   }
 }
+
+export async function liveStatus(infoHash: string): Promise<
+  | {
+      name: string | null;
+      file: string | null;
+      progress: number;
+      playable_bytes: number;
+      size_bytes: number;
+      watchable: boolean;
+      complete: boolean;
+      found_on_disk: boolean;
+      min_bytes: number;
+      sequential: boolean;
+    }
+  | { error: string }
+> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/stream/live/${infoHash}/status`, {
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) return { error: body?.detail ?? `HTTP ${res.status}` };
+    return body;
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}
+
+/** Turn a download that is already running into a watchable one.
+ *
+ *  The reason there is one downloader rather than two: changing your mind costs
+ *  an API call instead of losing everything downloaded so far. */
+export async function makeWatchable(infoHash: string): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/downloads/${infoHash}/sequential`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}

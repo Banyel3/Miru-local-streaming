@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { MediaFile, clock, displayTitle } from "@/lib/api";
+import { ActiveDownload, MediaFile, clock, displayTitle } from "@/lib/api";
+import { pollDownloads } from "@/app/actions";
 import { percentOf, useContinueWatching } from "@/lib/store";
 import { Close, Heart, Home, Library, Menu, Settings } from "@/components/icons";
 import { ArtTile, ProgressBar } from "@/components/ui";
@@ -49,7 +50,7 @@ function ContinueWatching({ files, onNavigate }: { files: MediaFile[]; onNavigat
   const byId = new Map(files.map((f) => [f.id, f]));
 
   return (
-    <section className="mt-auto pt-8">
+    <section className="pt-8">
       <div className="flex items-baseline gap-2 px-2.5 pb-3.5">
         <h2 className="text-[11px] font-extrabold tracking-[0.14em] text-text-muted">
           CONTINUE WATCHING
@@ -109,6 +110,77 @@ function ContinueWatching({ files, onNavigate }: { files: MediaFile[]; onNavigat
   );
 }
 
+/**
+ * In-flight downloads, in the panel that already exists.
+ *
+ * Not a "downloads tray". ContinueWatching below is already an ArtTile plus a
+ * label plus a 3px ProgressBar, which is exactly this, and inventing a second
+ * component for the same shape would mean two things to keep in step.
+ */
+function Downloading({ onNavigate }: { onNavigate?: () => void }) {
+  const [rows, setRows] = useState<ActiveDownload[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      const res = await pollDownloads();
+      if (!live) return;
+      if (!("error" in res)) {
+        setRows(res.downloads.filter((d) => d.state !== "done" || !d.in_library));
+      }
+      timer = setTimeout(tick, res && !("error" in res) && res.downloads.length ? 3000 : 20000);
+    };
+    tick();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="pt-8">
+      <div className="flex items-baseline gap-2 px-2.5 pb-3.5">
+        <h2 className="text-[11px] font-extrabold tracking-[0.14em] text-text-muted">
+          DOWNLOADING
+        </h2>
+        <span className="font-jp text-[10px] text-text-muted/80">ダウンロード</span>
+      </div>
+      <ul className="flex flex-col gap-1">
+        {rows.map((d) => (
+          <li key={d.job_id}>
+            <Link
+              href={`/watching/${d.job_id}`}
+              onClick={onNavigate}
+              className="flex items-center gap-3 rounded-xl p-2 transition-colors duration-150 hover:bg-border"
+            >
+              <ArtTile
+                seed={d.title}
+                className="h-[38px] w-[58px] shrink-0 rounded-lg border border-border"
+              />
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <span className="truncate text-[12.5px] font-bold">{d.title}</span>
+                <span className="text-[10.5px] text-text-muted tabular-nums">
+                  {d.state === "failed"
+                    ? "Failed"
+                    : d.state === "done"
+                      ? "Adding to library…"
+                      : `${Math.round(d.progress * 100)}%${
+                          d.eta_seconds ? ` · ${clock(d.eta_seconds)} left` : ""
+                        }`}
+                </span>
+                <ProgressBar percent={Math.round(d.progress * 100)} className="h-[3px]" />
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function SidebarBody({ files, onNavigate }: { files: MediaFile[]; onNavigate?: () => void }) {
   const pathname = usePathname();
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
@@ -138,6 +210,8 @@ function SidebarBody({ files, onNavigate }: { files: MediaFile[]; onNavigate?: (
         />
       </nav>
 
+      <div className="mt-auto" />
+      <Downloading onNavigate={onNavigate} />
       <ContinueWatching files={files} onNavigate={onNavigate} />
     </>
   );

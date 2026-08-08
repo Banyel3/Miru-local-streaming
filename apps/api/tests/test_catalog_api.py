@@ -154,17 +154,40 @@ class TestTheReleasePicker:
 
 
 class TestStartingADownload:
-    def test_a_sleeping_pc_refuses_rather_than_failing_obscurely(self, client, filled):
+    def test_a_sleeping_pc_refuses_rather_than_failing_obscurely(self, client, filled, monkeypatch):
+        import miru.catalog.router as mod
+
+        monkeypatch.setattr(mod, "configured", lambda: True)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         r = client.post(f"/api/catalog/works/{wid}/download", json={})
         assert r.status_code == 503
         assert "asleep" in r.json()["detail"].lower()
+
+    def test_never_installing_a_downloader_says_so_instead_of_blaming_the_pc(
+        self, client, filled
+    ):
+        # A lesson already learned once with the transcode worker: "the PC is
+        # asleep" and "you never set this up" are different problems, and
+        # sending someone to wake a machine that is already awake wastes their
+        # evening.
+        wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
+        r = client.post(f"/api/catalog/works/{wid}/download", json={})
+        assert r.status_code == 503
+        detail = r.json()["detail"].lower()
+        assert "set up" in detail or "install" in detail
+        assert "asleep" not in detail
+
+    def test_the_wall_tells_the_two_apart(self, client, filled):
+        b = client.get("/api/catalog").json()
+        assert b["downloader_configured"] is False
+        assert b["pc_reachable"] is False
 
     def test_downloading_with_no_choice_picks_for_the_user(self, client, filled, monkeypatch):
         import miru.catalog.router as mod
 
         fake = FakeDownloader()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
 
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
@@ -181,6 +204,7 @@ class TestStartingADownload:
 
         fake = FakeDownloader()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
 
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
@@ -197,6 +221,7 @@ class TestStartingADownload:
 
         fake = FakeDownloader()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
         monkeypatch.setattr(mod, "supports_streaming", lambda: True)
 
@@ -214,6 +239,7 @@ class TestStartingADownload:
 
         fake = FakeDownloader()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
         monkeypatch.setattr(mod, "supports_streaming", lambda: False)
 
@@ -228,6 +254,7 @@ class TestStartingADownload:
         fake = FakeDownloader()
         fake.submit = lambda magnet, **kw: type("J", (), {"id": "gid7"})()
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
 
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
@@ -249,6 +276,7 @@ class TestPollingDownloads:
                                   speed_bps=8_200_000, eta_seconds=180)
         )
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         client.post(f"/api/catalog/works/{wid}/download", json={})
@@ -267,6 +295,7 @@ class TestPollingDownloads:
 
         fake = FakeDownloader(fail_status=AcquisitionError("no such gid"))
         monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+        monkeypatch.setattr(mod, "configured", lambda: True)
         monkeypatch.setattr(mod, "downloader", lambda: fake)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         client.post(f"/api/catalog/works/{wid}/download", json={})

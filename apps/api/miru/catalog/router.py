@@ -15,7 +15,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from miru.acquisition.downloader import downloader, reachable, supports_streaming
+from miru.acquisition.downloader import (
+    configured,
+    downloader,
+    reachable,
+    supports_streaming,
+)
 from miru.acquisition.provider import AcquisitionError
 from miru.catalog import rails
 from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
@@ -141,6 +146,11 @@ def wall(
         # False means Download and live search are dead, whatever the wall looks
         # like. The UI says so once at the top rather than per card.
         "pc_reachable": pc_reachable(),
+        # Told apart deliberately: an unreachable PC needs waking, an
+        # unconfigured downloader needs installing, and sending someone to do
+        # the first when they need the second wastes their evening.
+        "downloader_configured": configured(),
+        "streaming": supports_streaming(),
         "empty": total is None,
         "refreshed_at": last.finished_at.isoformat() if last and last.finished_at else None,
         "refresh_error": last.error if last else None,
@@ -223,6 +233,11 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     work = db.get(CatalogWork, work_id)
     if work is None:
         raise HTTPException(404, "no such work")
+    if not configured():
+        raise HTTPException(
+            503, "No downloader is set up yet. Install qBittorrent on the PC and set "
+                 "MIRU_QBITTORRENT_URL."
+        )
     if not pc_reachable():
         raise HTTPException(503, "The PC is asleep, so downloads cannot start.")
 
@@ -322,3 +337,24 @@ def downloads(db: Session = Depends(get_db)):
             }
         )
     return {"pc_reachable": pc_reachable(), "streaming": supports_streaming(), "downloads": out}
+
+
+@router.post("/downloads/{info_hash}/sequential")
+def make_watchable(info_hash: str):
+    """Switch a running download to sequential so it can be watched.
+
+    This exists because intent changes: you queue something and then decide you
+    want it tonight. With one downloader that is this one call. With two it
+    would mean stopping, deleting and re-adding in the other one, losing
+    everything downloaded so far.
+    """
+    if not supports_streaming():
+        raise HTTPException(
+            409, "The configured downloader can't be watched while downloading."
+        )
+    dl = downloader()
+    try:
+        dl.make_sequential(info_hash)
+    except AcquisitionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "info_hash": info_hash}

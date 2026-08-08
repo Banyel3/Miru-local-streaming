@@ -323,6 +323,11 @@ export type Wall = {
   kind: string;
   /** False means Download and live search are dead, whatever the wall shows. */
   pc_reachable: boolean;
+  /** Told apart from pc_reachable on purpose: one needs waking, the other
+   *  needs installing, and the fixes are nothing alike. */
+  downloader_configured: boolean;
+  /** Whether Watch Now may promise "in a moment" or must say "when it finishes". */
+  streaming: boolean;
   empty: boolean;
   refreshed_at: string | null;
   refresh_error: string | null;

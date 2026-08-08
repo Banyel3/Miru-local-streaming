@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { Button } from "@/components/ui";
 import { Close } from "@/components/icons";
+import { useRouter } from "next/navigation";
 import { loadWork, startDownload } from "@/app/actions";
 
 /**
@@ -88,6 +89,7 @@ export function ReleaseSheet({
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     let live = true;
@@ -127,6 +129,10 @@ export function ReleaseSheet({
     }
     onStarted(work.id, res.jobId);
     onClose();
+    // Watch Now goes to the waiting screen, which starts playback on its own.
+    // Download stays put: the card becomes the progress state in place, so
+    // queueing three things is three clicks and no navigation.
+    if (watch) router.push(`/watching/${res.jobId}`);
   }
 
   // Two choices may be the same release. Showing the identical row twice under
