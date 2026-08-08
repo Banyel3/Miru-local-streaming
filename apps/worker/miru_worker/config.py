@@ -21,13 +21,17 @@ class Settings(BaseSettings):
     # hls.js fetches manifests and segments by XHR, so the worker is a
     # cross-origin fetch target and needs CORS. A bare <video src> would not,
     # which is why this only shows up once HLS enters the picture.
-    web_origin: str = "http://localhost:3001"
+    web_origin: str = "http://localhost:3001"   # comma-separated
 
     max_sessions: int = 4
     session_ttl_hours: int = 12
 
     # How long a first request waits for ffmpeg to produce a playable manifest.
     startup_timeout_s: float = 45.0
+
+    @property
+    def web_origins(self) -> list[str]:
+        return [o.strip() for o in self.web_origin.split(",") if o.strip()]
 
     @property
     def cache(self) -> Path:

@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     # can reach it — see docs/SETUP.md §8.
     token: str = ""
 
-    web_origin: str = "http://localhost:3000"
+    # Comma-separated. You browse from localhost on the server itself and from
+    # the tailnet address on every other device, and both are real origins.
+    web_origin: str = "http://localhost:3001"
 
     # Extracted subtitles land here. Rebuildable from the source files, so it
     # is a cache and not data: deleting it costs one ffmpeg run per track.
@@ -28,6 +30,10 @@ class Settings(BaseSettings):
     # How the *worker* reaches this API to pull sources. Must be an address the
     # PC can resolve — not localhost, which would point it at itself.
     public_api_url: str = "http://localhost:8000"
+
+    @property
+    def web_origins(self) -> list[str]:
+        return [o.strip() for o in self.web_origin.split(",") if o.strip()]
 
     @property
     def cache(self) -> Path:

@@ -7,10 +7,12 @@ knowing whether the PC is reachable.
 
 from __future__ import annotations
 
+import json
 import logging
-import socket
 import time
-from urllib.parse import urlencode, urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import urlencode
 
 from miru.core.config import settings
 
@@ -22,7 +24,7 @@ NEEDS_WORKER = {"transcode_audio", "transcode_full"}
 # Health is cached so the library page never pays for a network round trip per
 # file, and never blocks on a machine that is asleep.
 _CACHE_TTL_S = 10.0
-_PROBE_TIMEOUT_S = 0.3
+_PROBE_TIMEOUT_S = 1.0  # an HTTP round trip, not just a handshake
 
 _last_checked = 0.0
 _last_result = True  # fail OPEN: a flaky probe must not hide a playable file
@@ -33,11 +35,13 @@ def worker_configured() -> bool:
 
 
 def worker_up() -> bool:
-    """Cheap cached reachability check.
+    """Cached check that the worker — specifically — is answering.
 
-    A TCP connect rather than an HTTP request: it answers the only question that
-    matters (is anything listening) in a fraction of the time, and cannot be
-    held open by a worker that is busy encoding.
+    This asks /health and requires the worker's own response shape. A bare TCP
+    connect is faster but proves only that *something* holds the port: a stray
+    dev server, or another service that claimed it after a reboot, would pass and
+    Miru would promise playback that then fails. Caught exactly that in testing
+    against a leftover `python -m http.server`.
     """
     global _last_checked, _last_result
 
@@ -48,12 +52,12 @@ def worker_up() -> bool:
     if now - _last_checked < _CACHE_TTL_S:
         return _last_result
 
-    parsed = urlparse(settings.transcode_worker)
-    host, port = parsed.hostname, parsed.port or 80
+    url = f"{settings.transcode_worker.rstrip('/')}/health"
     try:
-        with socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_S):
-            _last_result = True
-    except OSError:
+        with urllib.request.urlopen(url, timeout=_PROBE_TIMEOUT_S) as resp:
+            body = json.loads(resp.read(512))
+        _last_result = bool(body.get("ok")) and "encoder" in body
+    except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         _last_result = False
     _last_checked = now
     return _last_result

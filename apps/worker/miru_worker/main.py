@@ -35,7 +35,7 @@ app = FastAPI(title="Miru transcode worker", version="0.1.0", lifespan=lifespan)
 # error and no video — the same failure mode a bare <video src> never has.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.web_origin],
+    allow_origins=settings.web_origins,
     allow_methods=["GET", "DELETE"],
     allow_headers=["*"],
 )
