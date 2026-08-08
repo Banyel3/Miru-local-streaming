@@ -289,3 +289,66 @@ class TestAnilistIsAskedFirstWhateverTheIndexerSaid:
         monkeypatch.setattr(enrich, "_tmdb", lambda t, y, k: None)
         enrich.lookup("anime", "Nothing At All", None)
         assert len(asked) == len(set(asked)), asked
+
+
+class TestAStatedYearCanOverruleATitleMatch:
+    """`One Piece 2023` is Netflix's live-action show, not the 1999 anime.
+
+    Both parse to the title `One Piece`, which resolves to AniList 21 — so the
+    live-action episodes merged onto the anime card. It showed: with the picker
+    preferring the smallest complete release, the default download for ONE PIECE
+    became `One Piece 2023 S01 COMPLETE`, a 2.7 GB live-action season on a card
+    for a 1000-episode anime.
+    """
+
+    def test_a_release_from_a_different_year_does_not_join_the_card(self, db_session):
+        from miru.catalog.ingest import _work_for
+        from miru.catalog.models import TitleResolution
+
+        db_session.add(TitleResolution(
+            kind="anime", query="one piece", provider="anilist", provider_id="21",
+            data={"provider": "anilist", "provider_id": "21",
+                  "display_title": "ONE PIECE", "year": 1999,
+                  "names": ["One Piece", "ONE PIECE"]},
+        ))
+        db_session.commit()
+
+        anime = _work_for(db_session, "anime", "One Piece", None)
+        db_session.commit()
+        live_action = _work_for(db_session, "anime", "One Piece", 2023)
+        db_session.commit()
+        assert live_action.id != anime.id
+
+    def test_the_same_year_still_merges(self, db_session):
+        from miru.catalog.ingest import _work_for
+        from miru.catalog.models import TitleResolution
+
+        db_session.add(TitleResolution(
+            kind="anime", query="frieren", provider="anilist", provider_id="154587",
+            data={"provider": "anilist", "provider_id": "154587",
+                  "display_title": "Frieren", "year": 2023, "names": ["Frieren"]},
+        ))
+        db_session.commit()
+        a = _work_for(db_session, "anime", "Frieren", 2023)
+        db_session.commit()
+        b = _work_for(db_session, "anime", "Frieren", None)
+        db_session.commit()
+        assert a.id == b.id
+
+    def test_one_year_out_is_not_a_different_show(self, db_session):
+        # A season that aired across New Year is dated either way by different
+        # groups. Splitting on that would undo the merging this catalogue does.
+        from miru.catalog.ingest import _work_for
+        from miru.catalog.models import TitleResolution
+
+        db_session.add(TitleResolution(
+            kind="anime", query="bleach", provider="anilist", provider_id="269",
+            data={"provider": "anilist", "provider_id": "269",
+                  "display_title": "Bleach", "year": 2004, "names": ["Bleach"]},
+        ))
+        db_session.commit()
+        a = _work_for(db_session, "anime", "Bleach", 2004)
+        db_session.commit()
+        b = _work_for(db_session, "anime", "Bleach", 2005)
+        db_session.commit()
+        assert a.id == b.id

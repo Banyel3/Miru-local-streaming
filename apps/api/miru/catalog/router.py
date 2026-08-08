@@ -70,6 +70,9 @@ def _candidates(releases: list[CatalogRelease]) -> list[Candidate]:
             group=r.release_group,
             grabbable=r.grabbable,
             stale=r.stale,
+            episode=r.episode,
+            episode_end=r.episode_end,
+            complete=bool(r.complete),
         )
         for r in releases
     ]
@@ -229,12 +232,41 @@ def rail_page(
     return {"items": [_work_json(w) for w in items], "next_cursor": next_cursor}
 
 
+def sweep_now(work_id: int) -> None:
+    """Run a pack sweep for one work, on its own session."""
+    from miru.catalog.sweep import sweep
+    from miru.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        work = db.get(CatalogWork, work_id)
+        if work is not None:
+            sweep(db, work)
+            db.commit()
+    except Exception:  # noqa: BLE001 — a sweep must never take anything down
+        log.exception("pack sweep failed for work %s", work_id)
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _request_sweep(work_id: int) -> None:
+    """Start one, off the request thread. Cheap when nothing is due."""
+    threading.Thread(target=sweep_now, args=(work_id,), daemon=True).start()
+
+
 @router.get("/works/{work_id}")
 def work_detail(work_id: int, db: Session = Depends(get_db)):
     """A work, its three named choices, and every release behind them."""
     work = db.get(CatalogWork, work_id)
     if work is None:
         raise HTTPException(404, "no such work")
+
+    # Look for complete packs of this show, in the background. The card is a
+    # day-deep slice of the front page until something asks for the rest, and a
+    # pack query takes seconds against four indexers — waiting on it would make
+    # every card feel broken. What it finds appears on the next poll.
+    _request_sweep(work_id)
 
     releases = list(
         db.execute(

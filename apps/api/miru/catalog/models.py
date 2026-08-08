@@ -103,6 +103,12 @@ class CatalogWork(Base):
     # derived from the category, which cannot tell: Nyaa files adult anime as
     # TV/Anime, correctly, so classification lets it straight through.
     adult: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # When this show was last asked about for complete packs. The indexers' front
+    # page is a day deep, so the episodes a card is missing are only ever
+    # reachable by querying — see catalog/sweep.py.
+    swept_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # AniList's own word: TV | MOVIE | OVA | ONA | SPECIAL. This is what tells a
     # film from a weekly show inside the anime rail — *One Piece Film: Red* is
@@ -170,6 +176,9 @@ class CatalogRelease(Base):
     season: Mapped[int | None] = mapped_column(Integer, nullable=True)
     episode: Mapped[int | None] = mapped_column(Integer, nullable=True)
     episode_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Whether this release is the whole of what it names. A season pack carries
+    # no episode numbers at all, so it cannot be inferred from the range.
+    complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     quality: Mapped[str | None] = mapped_column(String(16), nullable=True)
     release_group: Mapped[str | None] = mapped_column(String(128), nullable=True)
 

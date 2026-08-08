@@ -55,6 +55,17 @@ def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWo
     card, and splitting only shows the same title twice.
     """
     data = cached(db, kind, title)
+    if data and _a_different_production(data, year):
+        # The title resolves, but this release names a year the resolved work
+        # is not from. `One Piece 2023` is Netflix's live-action show and
+        # `One Piece` is the 1999 anime; both parse to the same title, so the
+        # live-action episodes merged onto the anime card — and once the picker
+        # started preferring the smallest complete release, the default download
+        # for a 1000-episode anime became a 2.7 GB live-action season.
+        #
+        # Falls back to grouping by title and year, which is what an unresolved
+        # release already does, so the remake gets its own card.
+        data = None
     if data:
         work = work_by_provider(db, kind, data)
         if work is not None:
@@ -97,6 +108,20 @@ def _work_for(db: Session, kind: str, title: str, year: int | None) -> CatalogWo
     return work
 
 
+# A remake is a different production; a season that aired across New Year is
+# not. Groups date the same show either side of the turn, and splitting on that
+# would undo the merging this catalogue exists to do.
+_REMAKE_GAP = 2
+
+
+def _a_different_production(data: dict, year: int | None) -> bool:
+    """Whether a stated year contradicts the work this title resolves to."""
+    theirs = data.get("year")
+    if not year or not theirs:
+        return False
+    return abs(int(year) - int(theirs)) >= _REMAKE_GAP
+
+
 def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool:
     """Write one release. Returns True if it is new to the catalog."""
     existing = db.execute(
@@ -120,6 +145,7 @@ def _upsert_release(db: Session, r: SearchResult, kind: str, pct: float) -> bool
                 season=p.season,
                 episode=p.episode,
                 episode_end=p.episode_end,
+                complete=p.complete,
                 quality=p.quality,
                 release_group=p.group,
                 size_bytes=int(r.size_bytes or 0),

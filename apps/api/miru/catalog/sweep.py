@@ -1,0 +1,101 @@
+"""Asking an indexer for the whole series, rather than what it uploaded today.
+
+The catalogue is built from each indexer's front page, and that page is about a
+day deep — `limit` is ignored and `offset` returns nothing, both measured. So a
+card holds many encodings of the few episodes uploaded this week and nothing
+else. On the live catalogue:
+
+    ONE PIECE      206 releases  ->   82 distinct episodes  of 1172
+    BLACK TORCH     26 releases  ->    5 distinct episodes
+    Cat and Dragon  17 releases  ->    3 distinct episodes
+
+No ranking or filtering reaches the missing ones: they were never fetched. A
+query does, immediately — `one piece batch` returns 126 results and every one is
+a pack, including the whole run to episode 1071.
+
+So opening a card asks. Once per show per day, in the background, through the
+same ingest path as everything else.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy.orm import Session
+
+from miru.acquisition.prowlarr import provider
+from miru.acquisition.provider import AcquisitionError
+from miru.catalog.ingest import ingest_search
+from miru.catalog.models import CatalogWork
+
+log = logging.getLogger(__name__)
+
+# Both words, because they find different things. `batch` is what fansub groups
+# tag a completed run with; `complete` is how a season pack is worded, and
+# `spy x family complete` is the only query that surfaces the Trix BDRip at all.
+TERMS = ("batch", "complete")
+
+# The front page turns over in about a day, so asking again sooner cannot
+# discover anything the last pass did not.
+WINDOW = timedelta(days=1)
+
+# A pack query is broad by nature. Kept generous because packs are what we came
+# for, and `ingest_search` already refuses anything that is not video.
+LIMIT = 100
+
+
+def due(work: CatalogWork, now: datetime | None = None) -> bool:
+    """Whether this work is worth asking about again.
+
+    A card polls itself while it is open, so sweeping per request would fire a
+    search at four indexers every couple of seconds — the same shape that had
+    the live remux starting an ffmpeg per poll.
+    """
+    if work.kind not in ("anime", "series"):
+        # A film has no missing episodes, and "batch" against one returns
+        # somebody's whole filmography.
+        return False
+    if not (work.display_title or "").strip():
+        return False
+    if work.swept_at is None:
+        return True
+    last = work.swept_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) - last >= WINDOW
+
+
+def sweep(db: Session, work: CatalogWork) -> int:
+    """Look for complete packs of this show. Returns how many results were seen.
+
+    Never raises. An indexer being down is a card with fewer options on it, not
+    a card that fails to open.
+    """
+    if not due(work):
+        return 0
+
+    title = work.display_title.strip()
+    seen = 0
+    for term in TERMS:
+        try:
+            results = provider.search(f"{title} {term}", LIMIT)
+        except AcquisitionError as exc:
+            log.info("pack sweep for %r (%s) found nothing: %s", title, term, exc)
+            continue
+        except Exception:  # noqa: BLE001 — a sweep must never break the card
+            log.exception("pack sweep for %r (%s) failed", title, term)
+            continue
+
+        seen += len(results)
+        try:
+            ingest_search(db, results)
+        except Exception:  # noqa: BLE001 — nor may writing what it found
+            log.exception("could not ingest pack results for %r", title)
+            db.rollback()
+
+    # Stamped even when nothing came back. A show with no packs must not be
+    # searched again on every single open.
+    work.swept_at = datetime.now(timezone.utc)
+    log.info("pack sweep for %r saw %d results", title, seen)
+    return seen

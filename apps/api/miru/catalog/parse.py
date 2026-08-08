@@ -42,6 +42,17 @@ _SAFE_CODEC = re.compile(r"\b(x264|h\.?264|avc)\b", re.I)
 JUNK = re.compile(r"\b(CAM|HDCAM|CAMRIP|TS|HDTS|TELESYNC|TELECINE|SCR|SCREENER)\b")
 
 _RESOLUTION = re.compile(r"\b(2160p|1080p|720p|576p|480p|360p)\b", re.I)
+
+# The words a release uses to say it holds everything.
+_COMPLETE = re.compile(r"\b(batch|complete|complete series|full series)\b", re.I)
+
+# `(0001-1071+Movies+Specials)` — the tail is what a pack adds beyond the run,
+# and leaving it in made the title `One Piece 0001 1071 Movies`.
+_PACK_TAIL = re.compile(r"\+\s*(movies|specials|ova|oad|ovas|extras|nc(?:op|ed))\b", re.I)
+
+# An episode range in its own bracket or parens: (01-28), (0001-1071), [001-574].
+# Anchored to the delimiters so a year, a resolution or a date cannot match.
+_PACK_RANGE = re.compile(r"[\[(]\s*(\d{1,4})\s*[-–~]\s*(\d{1,4})\s*[\])]")
 _DIMENSIONS = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})\b", re.I)
 
 
@@ -54,6 +65,10 @@ class Parsed:
     episode_end: int | None = None  # batches: "744-746" ends at 746
     quality: str | None = None      # normalised to 1080p / 720p / ...
     group: str | None = None
+    # Whether this release is the whole of what it names — a series batch or a
+    # complete season. A season pack carries no episode numbers at all, so
+    # without this it is indistinguishable from a single episode.
+    complete: bool = False
 
 
 # Anything in the CJK blocks: Han, hiragana, katakana, and the full-width
@@ -258,7 +273,7 @@ def _resolution_of(name: str) -> str | None:
 def _parse_anime(name: str) -> Parsed:
     import anitopy
 
-    cleaned = _light_clean(name)
+    cleaned = _PACK_RANGE.sub(" ", _PACK_TAIL.sub(" ", _light_clean(name)))
     raw = anitopy.parse(cleaned) or {}
     if not raw.get("anime_title"):
         # anitopy could not find a title at all, which is what the fully CJK
@@ -304,7 +319,7 @@ def _parse_general(name: str) -> Parsed:
     # titled `B` with 7 releases on it — unrecognisable, unsearchable, and it
     # groups with anything else that parses to one letter. A release name is
     # not a path.
-    raw = guessit(name.replace("/", " "))
+    raw = guessit(_PACK_RANGE.sub(" ", _PACK_TAIL.sub(" ", name)).replace("/", " "))
 
     def one(key):
         v = raw.get(key)
@@ -325,6 +340,17 @@ def _parse_general(name: str) -> Parsed:
     )
 
 
+def _pack_range(name: str) -> tuple[int | None, int | None]:
+    """An episode range a pack states in brackets, if it states one."""
+    if m := _PACK_RANGE.search(_PACK_TAIL.sub("", name)):
+        first, last = int(m.group(1)), int(m.group(2))
+        # Ordered, and not a resolution pair: `1920x1080` cannot reach here
+        # because of the delimiters, but `(2020-2024)` is a year span.
+        if first < last and last <= 9999 and not (first > 1900 and last > 1900):
+            return first, last
+    return None, None
+
+
 def parse(name: str, kind: str) -> Parsed:
     """Parse a release name, routed by kind.
 
@@ -333,9 +359,42 @@ def parse(name: str, kind: str) -> Parsed:
     one-release card, which is honest, rather than dropping the release.
     """
     try:
-        return _parse_anime(name) if kind == ANIME else _parse_general(name)
+        got = _parse_anime(name) if kind == ANIME else _parse_general(name)
     except Exception:
-        return Parsed(title=_clean(name) or name, quality=_resolution_of(name))
+        got = Parsed(title=_clean(name) or name, quality=_resolution_of(name))
+    return _as_pack(got, name)
+
+
+def _as_pack(got: Parsed, name: str) -> Parsed:
+    """Read what a pack states that the episode parsers do not.
+
+    Applied after both paths rather than inside either, because the shapes are
+    the same in scene and fansub naming and because a pack is the one thing a
+    card needs in order to hold a whole series — the indexers' front page is
+    about a day deep, so the recent episodes are all that ingest ever sees.
+    """
+    # A trailing year belongs in `year`, not in the title. anitopy leaves it
+    # where it is and sets nothing, so `One Piece 2023` became a title of its
+    # own — which then fuzzy-matched the 1999 anime at AniList, and Netflix's
+    # live-action show became the default download for a 1000-episode series.
+    if m := re.search(r"\s(19\d{2}|20\d{2})$", got.title or ""):
+        got.title = got.title[: m.start()].strip()
+        got.year = got.year or int(m.group(1))
+
+    first, last = _pack_range(name)
+    if first is not None and got.episode_end is None:
+        # Only when the episode parser did not already find a range: it reads
+        # `- 09` and `S02E07` correctly and this must not overrule it.
+        got.episode, got.episode_end = first, last
+
+    # "Complete" means the whole run, not merely a range. `One Piece 741-743` is
+    # three episodes out of the middle and offering it as the series would be a
+    # card that says it has everything and does not. A run that starts at
+    # episode 1 is the whole of what exists so far; the word is the only signal
+    # a season pack carries, since it has no numbers to read at all.
+    from_the_start = got.episode == 1 and (got.episode_end or 0) > 1
+    got.complete = bool(from_the_start or _COMPLETE.search(_PACK_TAIL.sub("", name)))
+    return got
 
 
 def predict_strategy(name: str) -> str:

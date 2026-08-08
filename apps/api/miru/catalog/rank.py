@@ -50,6 +50,12 @@ class Candidate:
     group: str | None = None
     grabbable: bool = True
     stale: bool = False
+    # What this release covers. A card is opened to be completed, so the picker
+    # has to be able to tell one episode from the whole run — it could not, and
+    # on a card holding a 1-915 pack it still offered episode 1172.
+    episode: int | None = None
+    episode_end: int | None = None
+    complete: bool = False
 
 
 def seeder_percentiles(items: list[Candidate]) -> dict[str, float]:
@@ -137,6 +143,21 @@ def pick_default(items: list[Candidate], prefer_group: str | None = None) -> Can
     return min(
         ranked,
         key=lambda c: (
+            # Completeness first, and above quality on purpose: a complete 720p
+            # run is a series you can watch and a 1080p episode is not. Smallest
+            # among the complete ones, because 630 GB against 860 GB free is
+            # most of the disk in one click and a 42 GB season is just as
+            # complete. Seeders still gate it — an unseeded pack is not a way to
+            # finish a series, it is a download that never finishes.
+            not c.complete,
+            # Uploaders tag any multi-episode release a batch, so completeness
+            # alone picked the smallest self-declared one — live, that made the
+            # ONE PIECE default `Episodes 838-875`, a chunk out of the middle.
+            # A card is opened to be completed, so a run from the beginning wins
+            # first; a pack that states no episodes at all is a season pack and
+            # counts as one.
+            c.complete and c.episode not in (1, None),
+            c.size_bytes if c.complete else 0,
             _quality_rank(c.quality),
             needs_pc(c.title),
             bool(wanted) and (c.group or "").casefold() != wanted,
