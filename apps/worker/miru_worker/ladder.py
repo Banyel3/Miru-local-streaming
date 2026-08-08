@@ -26,9 +26,13 @@ class Rendition:
     def bufsize_k(self) -> int:
         return self.bitrate_k * 2
 
-    @property
-    def audio_k(self) -> int:
-        return 128 if self.height >= 720 else 96
+
+# Audio is encoded identically in every variant on purpose. If the bitrate or
+# channel layout differs between rungs, switching quality changes the audio
+# configuration too, and the player has to re-initialise its audio decoder in
+# the middle of playback. Keeping it constant means a switch only ever swaps the
+# video track — which is the whole point of an ABR ladder.
+AUDIO_BITRATE_K = 128
 
 
 LADDER: tuple[Rendition, ...] = (
@@ -105,23 +109,36 @@ def build_command(
             ]
             maps += ["-preset", "p4"] if encoder == "h264_nvenc" else ["-preset", "veryfast"]
 
-        for i, r in enumerate(renditions):
-            maps += ["-map", "0:a:0?", f"-c:a:{i}", "aac", "-ac", "2", f"-b:a:{i}", f"{r.audio_k}k"]
+        for i in range(len(renditions)):
+            maps += ["-map", "0:a:0?", f"-c:a:{i}", "aac", "-ac", "2",
+                     f"-b:a:{i}", f"{AUDIO_BITRATE_K}k", f"-ar:{i}", "48000"]
 
         var_map = " ".join(f"v:{i},a:{i}" for i in range(len(renditions)))
 
     hls = [
-        # Keyframe every segment so the variants are switchable at the same points.
-        "-g", str(SEGMENT_SECONDS * 24), "-keyint_min", str(SEGMENT_SECONDS * 24),
+        # Force a keyframe exactly on every segment boundary. Expressed in
+        # seconds rather than a GOP length in frames, because a frame count only
+        # lines up for one frame rate — a 25 or 30 fps source would land its
+        # keyframes off the boundaries and switching would break.
+        "-force_key_frames", f"expr:gte(t,n_forced*{SEGMENT_SECONDS})",
         "-sc_threshold", "0",
         "-f", "hls",
         "-hls_time", str(SEGMENT_SECONDS),
+        # fMP4/CMAF rather than MPEG-TS: the player swaps renditions by feeding
+        # a new init segment to Media Source Extensions, which is markedly
+        # cleaner than transmuxing TS on the fly, and is what makes a quality
+        # switch not stall the video decoder.
+        "-hls_segment_type", "fmp4",
+        "-hls_fmp4_init_filename", "init.mp4",
+        # Every segment is independently decodable, so the player may start at
+        # or switch to any of them.
+        "-hls_flags", "independent_segments",
         # `event`: segments are retained and the manifest grows, so seeking
         # backward is free. `vod` would require the whole encode to finish first.
         "-hls_playlist_type", "event",
         "-master_pl_name", "master.m3u8",
         "-var_stream_map", var_map,
-        "-hls_segment_filename", str(out_dir / "%v" / "seg%d.ts"),
+        "-hls_segment_filename", str(out_dir / "%v" / "seg%d.m4s"),
         str(out_dir / "%v" / "index.m3u8"),
     ]
     return base + maps + hls

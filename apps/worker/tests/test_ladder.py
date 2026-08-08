@@ -66,6 +66,31 @@ def test_copy_video_produces_a_single_variant_and_no_scaling():
     assert "v:0,a:0" in joined
 
 
+def test_audio_is_identical_across_variants():
+    # Differing audio between rungs forces an audio decoder re-init on every
+    # quality switch, which stalls video while audio keeps playing.
+    cmd = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(1080), "libx264"))
+    assert cmd.count("-b:a:0 128k") == 1
+    assert cmd.count("-b:a:1 128k") == 1
+    assert cmd.count("-b:a:2 128k") == 1
+    assert "96k" not in cmd
+
+
+def test_keyframes_are_forced_by_time_not_by_frame_count():
+    # A GOP length in frames only aligns for one frame rate; 25 or 30 fps would
+    # put keyframes off the segment boundaries and break switching.
+    cmd = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(720), "libx264"))
+    assert "expr:gte(t,n_forced*4)" in cmd
+    assert "-g " not in cmd
+
+
+def test_segments_are_fmp4_and_independent():
+    cmd = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(720), "libx264"))
+    assert "-hls_segment_type fmp4" in cmd
+    assert "independent_segments" in cmd
+    assert "seg%d.m4s" in cmd
+
+
 def test_nvenc_and_x264_get_their_own_presets():
     nv = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(720), "h264_nvenc"))
     sw = " ".join(build_command("http://h/s", Path("/tmp/o"), renditions_for(720), "libx264"))

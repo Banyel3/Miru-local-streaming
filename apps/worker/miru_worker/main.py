@@ -12,7 +12,12 @@ from miru_worker.ladder import is_allowed, session_id
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-MEDIA_TYPES = {".m3u8": "application/vnd.apple.mpegurl", ".ts": "video/mp2t"}
+MEDIA_TYPES = {
+    ".m3u8": "application/vnd.apple.mpegurl",
+    ".ts": "video/mp2t",
+    ".m4s": "video/iso.segment",
+    ".mp4": "video/mp4",
+}
 
 
 @asynccontextmanager
@@ -86,8 +91,8 @@ def serve(sid: str, path: str):
         target,
         media_type=MEDIA_TYPES.get(target.suffix, "application/octet-stream"),
         # Segments are immutable; playlists grow while the encode runs.
-        headers={"Cache-Control": "public, max-age=31536000"
-                 if target.suffix == ".ts" else "no-cache"},
+        headers={"Cache-Control": "no-cache" if target.suffix == ".m3u8"
+                 else "public, max-age=31536000"},
     )
 
 

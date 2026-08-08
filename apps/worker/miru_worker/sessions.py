@@ -112,7 +112,7 @@ async def _await_master(session: Session) -> None:
     that references segments which do not exist yet makes the player give up."""
     deadline = time.time() + settings.startup_timeout_s
     while time.time() < deadline:
-        if session.master.exists() and any(session.dir.rglob("seg0.ts")):
+        if session.master.exists() and any(session.dir.rglob("seg0.m4s")):
             return
         if not session.alive:
             err = b""
