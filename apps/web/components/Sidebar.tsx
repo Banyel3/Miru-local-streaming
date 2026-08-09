@@ -7,6 +7,7 @@ import { ActiveDownload, MediaFile, clock, displayTitle } from "@/lib/api";
 import { pollDownloads } from "@/app/actions";
 import { percentOf, useContinueWatching } from "@/lib/store";
 import { Close, Down, Heart, Home, Library, Menu, Settings } from "@/components/icons";
+import { Logo } from "@/components/Logo";
 import { ArtTile, ProgressBar } from "@/components/ui";
 
 const NAV = [
@@ -197,9 +198,8 @@ function SidebarBody({ files, onNavigate }: { files: MediaFile[]; onNavigate?: (
 
   return (
     <>
-      <div className="flex items-baseline gap-2.5 px-2.5 pb-[30px]">
-        <span className="text-[26px] font-extrabold tracking-[-0.02em]">Miru</span>
-        <span className="font-jp text-sm text-text-muted">見る</span>
+      <div className="px-2.5 pb-[30px]">
+        <Logo size="md" />
       </div>
 
       <nav aria-label="Main" className="flex flex-col gap-1.5">
@@ -269,9 +269,8 @@ export function AppShell({ files, children }: { files: MediaFile[]; children: Re
           >
             <Menu />
           </button>
-          <Link href="/" className="flex items-baseline gap-2">
-            <span className="text-xl font-extrabold tracking-[-0.02em]">Miru</span>
-            <span className="font-jp text-xs text-text-muted">見る</span>
+          <Link href="/">
+            <Logo size="sm" />
           </Link>
         </div>
 

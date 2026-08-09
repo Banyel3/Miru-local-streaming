@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_PUBLIC } from "@/lib/api";
+import { Logo } from "@/components/Logo";
 
 type Stage = "email" | "sent";
 
@@ -58,9 +59,9 @@ export function LoginForm() {
 
   return (
     <div className="flex w-full max-w-sm flex-col gap-5 rounded-2xl border border-border bg-surface p-7">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-extrabold tracking-[-0.01em]">
-          Miru <span className="font-jp text-sm font-normal text-text-muted">ログイン</span>
+      <div className="flex flex-col gap-2">
+        <h1>
+          <Logo size="md" />
         </h1>
         <p className="text-[13px] leading-relaxed text-text-dim">
           {stage === "email"
