@@ -31,6 +31,11 @@ class TestSubtitleExtractionActuallyRuns:
             open(out, "w").write("WEBVTT\n\n")
             return Done()
 
+        # CI has no ffmpeg, and the suite's own rule is that nothing here may
+        # need one — but _run() checks shutil.which before the faked
+        # subprocess.run can answer, so this test passed locally (ffmpeg
+        # installed) and failed on every CI push for hours.
+        monkeypatch.setattr(subtitles.shutil, "which", lambda _: "/usr/bin/ffmpeg")
         monkeypatch.setattr(subtitles.subprocess, "run", fake_run)
         src = tmp_path / "in.mkv"
         src.write_bytes(b"\0")
