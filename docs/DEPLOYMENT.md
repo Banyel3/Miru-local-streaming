@@ -386,7 +386,7 @@ unchanged. Revisit only if the PC moves to wired Ethernet.
 ## Going public — Funnel + magic-link auth
 
 Design and review: `docs/plans/go-live-auth.md`. The public door is Tailscale
-Funnel forwarding to nginx's gated block on `127.0.0.1:8081`
+Funnel forwarding to nginx's gated block on `127.0.0.1:8090`
 (`deploy/nginx/miru-public.conf`); the tailnet block on :80 stays ungated.
 
 **One-time setup, in order:**
@@ -405,20 +405,28 @@ Funnel forwarding to nginx's gated block on `127.0.0.1:8081`
 4. **nginx**: install `miru-public.conf` (header comment has the commands),
    `sudo nginx -t && sudo systemctl reload nginx`.
 5. **Restart the API** so the auth tables exist: `systemctl --user restart miru-api`.
-6. **Funnel on**: `tailscale funnel --bg 8081` (needs the funnel node
-   attribute enabled once in the admin console).
+6. **Confirm nginx owns the port before publishing anything**:
+   `ss -ltn 'sport = :8090'` must show a listener AND
+   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/login` must
+   be 200 from *Miru's* login page. `nginx -t` only parses the config: if
+   another process already holds the port, the reload cannot bind, nginx
+   keeps its old config, and `systemctl reload` still reports success.
+   Funnel will then publish whatever else is on that port. This is not
+   hypothetical — 8081 is File Browser, and it went public for two minutes.
+7. **Funnel on**: `tailscale funnel --bg 8090` (needs the funnel node
+   attribute enabled once in the admin console). Off again: `tailscale funnel off`.
 
 **Gate checklist — run after every change to the public block (it has no
 pytest; this repo's worst outage was an nginx subtlety):**
 
 ```bash
 G() { curl -s -o /dev/null -w "%{http_code}" -H "Host: ban-1.tail88f195.ts.net" "$@"; }
-G http://127.0.0.1:8081/                       # 302 → /login
-G http://127.0.0.1:8081/api/library            # 401, plain — never HTML
-G http://127.0.0.1:8081/hls                    # 401, plain
-G http://127.0.0.1:8081/login                  # 200 without any cookie
+G http://127.0.0.1:8090/                       # 302 → /login
+G http://127.0.0.1:8090/api/library            # 401, plain — never HTML
+G http://127.0.0.1:8090/hls                    # 401, plain
+G http://127.0.0.1:8090/login                  # 200 without any cookie
 G -X POST -H 'Content-Type: application/json' -d '{"email":"x@y.z"}' \
-  http://127.0.0.1:8081/api/auth/request       # 200 — and identical for any address
+  http://127.0.0.1:8090/api/auth/request       # 200 — and identical for any address
 # then with a real cookie from a login: / and /api/library and /hls all 200,
 # and a Server Action POST (e.g. Watch Now) completes through the gate.
 ```

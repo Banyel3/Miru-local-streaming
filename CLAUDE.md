@@ -53,7 +53,11 @@ cd apps/web && npx tsc --noEmit                        # must be clean
   To deploy: `systemctl --user stop miru-web && npm run build && systemctl --user
   start miru-web`. Never build while it is running — the build replaces `.next`
   underneath the server and the site 500s. `npx tsc --noEmit` for a quick check.
-- **Port 3000 is an unrelated portfolio app.** Miru's web is 3001.
+- **Port 3000 is an unrelated portfolio app.** Miru's web is 3001, and **8081
+  is File Browser** — nginx could not bind it, kept its old config, and
+  `systemctl reload nginx` reported success anyway, so Tailscale Funnel
+  published File Browser to the internet instead of Miru. Miru's public block
+  is 8090; always `ss -ltn 'sport = :PORT'` before exposing anything.
 - **nginx `proxy_set_header` does not inherit the way it looks like it does.**
   An outer block's headers apply only when the inner block sets *none* of its
   own. Every `location` in `deploy/nginx/miru.conf` sets at least one, so the
