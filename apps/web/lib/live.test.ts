@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { canPlayNow, endedForReal, remuxWait, resumeSrc, streamState } from "./live";
+import { canPlayNow, endedForReal, remuxWait, resumeSrc, startupState, streamState } from "./live";
 
 const done = { complete: true, playable_bytes: 100, size_bytes: 100 };
 const growing = { complete: false, playable_bytes: 30, size_bytes: 100 };
@@ -132,5 +132,24 @@ describe("waiting for a library remux", () => {
     const w = remuxWait({ state: "failed", percent: null, error: "ffmpeg exited 1" });
     expect(w.done).toBe(false);
     expect(w.failed).toContain("ffmpeg");
+  });
+});
+
+describe("the first seconds after Watch Now", () => {
+  // Search's Watch Now used to hold a static "Starting…" through a
+  // several-second submit chain, then hard-navigate — it read as stuck. The
+  // player page is the real loading state, so navigation happens immediately
+  // and the submit races it: for a short grace window, "the downloader does
+  // not know this torrent yet" means STARTING, not broken.
+  it("an unknown torrent inside the grace window is still starting", () => {
+    expect(startupState({ elapsedS: 4, statusError: true })).toBe("starting");
+  });
+
+  it("an unknown torrent after the grace window is a real error", () => {
+    expect(startupState({ elapsedS: 40, statusError: true })).toBe("failed");
+  });
+
+  it("a healthy status ends the startup phase regardless of clock", () => {
+    expect(startupState({ elapsedS: 1, statusError: false })).toBe("ready");
   });
 });

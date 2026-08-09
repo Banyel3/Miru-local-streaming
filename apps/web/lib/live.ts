@@ -109,3 +109,24 @@ export function remuxWait(s: RemuxStatus): {
     label: s.percent != null ? `Preparing for your browser — ${s.percent}%` : "Preparing for your browser…",
   };
 }
+
+/** How long a just-submitted torrent may be unknown to the downloader before
+ *  that means failure rather than "the submit is still landing". Covers the
+ *  server action → API → qBittorrent-over-tailnet chain with headroom. */
+export const STARTUP_GRACE_S = 25;
+
+/**
+ * What an early status error means.
+ *
+ * Watch Now navigates to the player immediately — the player's buffering
+ * overlay is the loading state, not a frozen button label — so the submit
+ * races the first poll, and "no such torrent" during the race is the normal
+ * case, not a failure.
+ */
+export function startupState(s: {
+  elapsedS: number;
+  statusError: boolean;
+}): "ready" | "starting" | "failed" {
+  if (!s.statusError) return "ready";
+  return s.elapsedS <= STARTUP_GRACE_S ? "starting" : "failed";
+}

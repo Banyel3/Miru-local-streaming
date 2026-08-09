@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC, fileSize } from "@/lib/api";
-import { canPlayNow, endedForReal, resumeSrc, streamState } from "@/lib/live";
+import { canPlayNow, endedForReal, resumeSrc, startupState, streamState } from "@/lib/live";
 import { downloadAction, keepStream, liveStatus, makeWatchable } from "@/app/actions";
 import { Player } from "@/app/watch/[id]/Player";
 import { Button, ButtonLink, ProgressBar } from "@/components/ui";
@@ -45,6 +45,7 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
   // for the pieces that have landed since — see lib/live.ts.
   const [resume, setResume] = useState(0);
   const sample = useRef<{ bytes: number; at: number } | null>(null);
+  const mounted = useRef(Date.now());
   const router = useRouter();
 
   useEffect(() => {
@@ -55,7 +56,14 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
       const res = await liveStatus(infoHash);
       if (!live) return;
       if ("error" in res) {
-        setError(res.error);
+        // Watch Now navigates here IMMEDIATELY — this overlay is the loading
+        // state, not a frozen button — so the submit races the first polls
+        // and "no such torrent" inside the grace window means starting.
+        const phase = startupState({
+          elapsedS: (Date.now() - mounted.current) / 1000,
+          statusError: true,
+        });
+        setError(phase === "starting" ? null : res.error);
       } else {
         setError(null);
         setStatus(res);
@@ -169,7 +177,9 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
               </p>
               <ProgressBar percent={bufferPct} className="h-1.5 max-w-[420px]" />
               <p className="max-w-[60ch] text-[12px] text-text-muted">
-                {status && !status.found_on_disk
+                {!status
+                  ? "Setting up the download on the PC…"
+                  : !status.found_on_disk
                   ? "Waiting for the first pieces to land."
                   : ready && !streamReady
                     ? "Getting it ready to play in your browser — this takes a moment."

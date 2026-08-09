@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { SearchResult, fileSize } from "@/lib/api";
 import { startDownloadDirect } from "@/app/actions";
 import { Button, EmptyState, MicroChip, SectionHeading } from "@/components/ui";
@@ -10,6 +11,7 @@ import { Button, EmptyState, MicroChip, SectionHeading } from "@/components/ui";
  *  grouping that has not happened. */
 export function SearchResults({ query, results }: { query: string; results: SearchResult[] }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const router = useRouter();
   const [done, setDone] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
@@ -28,11 +30,22 @@ export function SearchResults({ query, results }: { query: string; results: Sear
   async function grab(r: SearchResult, watch: boolean) {
     setBusy(r.id);
     setError(null);
+
+    if (watch && r.info_hash) {
+      // Straight to the player — its buffering overlay is the loading state.
+      // The old flow held a static "Starting…" through a several-second
+      // submit chain and read as stuck. The submit continues server-side and
+      // the player tolerates the race (lib/live.ts startupState).
+      startDownloadDirect(r.id, true, r.info_hash);
+      router.push(`/watching/${r.info_hash.toLowerCase()}`);
+      return;
+    }
+
     const res = await startDownloadDirect(r.id, watch, r.info_hash);
     setBusy(null);
     if ("error" in res) return setError(res.error);
     setDone((prev) => new Set(prev).add(r.id));
-    if (watch && res.jobId) window.location.href = `/watching/${res.jobId}`;
+    if (watch && res.jobId) router.push(`/watching/${res.jobId}`);
   }
 
   return (
@@ -70,10 +83,24 @@ export function SearchResults({ query, results }: { query: string; results: Sear
                     disabled={busy === r.id}
                     onClick={() => grab(r, false)}
                   >
-                    Download
+                    {busy === r.id ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        Sending…
+                      </span>
+                    ) : (
+                      "Download"
+                    )}
                   </Button>
                   <Button size="sm" disabled={busy === r.id} onClick={() => grab(r, true)}>
-                    {busy === r.id ? "Starting…" : "Watch Now"}
+                    {busy === r.id ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        Starting…
+                      </span>
+                    ) : (
+                      "Watch Now"
+                    )}
                   </Button>
                 </>
               )}
