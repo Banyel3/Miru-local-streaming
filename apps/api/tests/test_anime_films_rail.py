@@ -66,3 +66,45 @@ class TestFilmsHaveTheirOwnRowInsideAnime:
         film = _w(db_session, "Monay", "MOVIE", kind="movie")
         got = db_session.execute(_base("movie", rail="latest")).scalars().all()
         assert [w.id for w in got] == [film.id]
+
+
+class TestAnimeSeriesAndAnimeMoviesAreTheirOwnWalls:
+    """The user asked for the split as top-level filters, not a rail.
+
+    The provider decides what a show is (kind) and what shape it is (format),
+    so the walls are derivable: anime-movies is kind=anime + format=MOVIE,
+    anime-series is the rest of anime, and Movies stays live-action because
+    anime films carry kind=anime since the identity fix.
+    """
+
+    def test_the_anime_movies_wall_holds_only_anime_films(self, db_session):
+        film = _w(db_session, "Your Name", "MOVIE")
+        _w(db_session, "Frieren", "TV")
+        _w(db_session, "Monay", "MOVIE", kind="movie")
+        got = db_session.execute(_base("anime-movies", rail="latest")).scalars().all()
+        assert [w.id for w in got] == [film.id]
+
+    def test_the_anime_series_wall_excludes_the_films(self, db_session):
+        _w(db_session, "Your Name", "MOVIE")
+        show = _w(db_session, "Frieren", "TV")
+        got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
+        assert [w.id for w in got] == [show.id]
+
+    def test_an_unresolved_anime_counts_as_a_series(self, db_session):
+        # No provider answer means no format. The wall must not hide it — and
+        # "series" is where a weekly show lands, which is what most anime is.
+        w = _w(db_session, "Unresolved", None)
+        got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [w.id]
+
+    def test_the_api_accepts_the_new_kinds(self, client, db_session):
+        for kind in ("anime-series", "anime-movies"):
+            assert client.get(f"/api/catalog?kind={kind}").status_code == 200
+
+    def test_the_split_walls_have_no_films_rail(self, db_session):
+        # The rail existed to separate films inside the mixed anime wall; on
+        # the split walls it would duplicate the pill.
+        from miru.catalog.rails import rails_for
+
+        assert "films" not in {r.key for r in rails_for("anime-series")}
+        assert "films" not in {r.key for r in rails_for("anime-movies")}

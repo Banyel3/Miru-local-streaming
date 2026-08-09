@@ -34,7 +34,7 @@ from miru.library.series import episodes_for
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 
-KINDS = {"all", "anime", "movie", "series"}
+KINDS = {"all", "anime", "anime-series", "anime-movies", "movie", "series"}
 
 # Cached so a wall render is not three RPCs to a machine that may be asleep.
 _pc_state: tuple[float, bool] = (0.0, False)
@@ -267,7 +267,12 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
     # Look for complete packs of this show, in the background. The card is a
     # day-deep slice of the front page until something asks for the rest, and a
     # pack query takes seconds against four indexers — waiting on it would make
-    # every card feel broken. What it finds appears on the next poll.
+    # every card feel broken. `sweep_started` tells the sheet to re-fetch as
+    # the results land — without it a successful sweep was only visible after
+    # close-and-reopen, which read as "it isn't fetching".
+    from miru.catalog.sweep import due as sweep_due
+
+    sweep_started = sweep_due(work)
     _request_sweep(work_id)
 
     releases = list(
@@ -292,6 +297,7 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
         # What is already on disk, so the sheet marks a ✓ instead of offering a
         # re-download — file-page §5's actual remaining gap. The library is the
         # thing that knows; series.episodes_for merges owned and available.
+        "sweep_started": sweep_started,
         "owned_episodes": [
             {"episode": e["episode"], "episode_end": e["episode_end"], "file_id": e["file_id"]}
             for e in episodes_for(db, work)

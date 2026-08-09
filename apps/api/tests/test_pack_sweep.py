@@ -152,3 +152,88 @@ class TestTheCardTriggersItWithoutWaitingOnIt:
         monkeypatch.setattr(mod, "_request_sweep", lambda wid: fired.append(wid))
         assert client.get("/api/catalog/works/999999").status_code == 404
         assert fired == []
+
+
+class TestTheSweepAsksEveryNameTheShowGoesBy:
+    """Measured live: 'Frieren: Beyond Journey's End batch' finds 13 results;
+    'Sousou no Frieren batch' finds 49. Packs are named by fansub groups in
+    romaji, and the sweep only ever asked the provider's canonical title — so
+    most cards saw 0 results and stayed incomplete, which is the reported bug.
+
+    The naming variants are already in the catalogue: the releases' own
+    parsed titles are the strings that actually appear on the indexers.
+    """
+
+    def _with_variants(self, db):
+        from miru.catalog.models import CatalogRelease
+
+        w = _work(db, "Frieren: Beyond Journey's End")
+        for i, pt in enumerate(
+            ["Sousou no Frieren", "Sousou no Frieren", "Sousou no Frieren",
+             "Frieren Beyond Journeys End"]
+        ):
+            db.add(CatalogRelease(
+                info_hash=f"{i:040x}", indexer="Nyaa.si", guid=f"g{i}",
+                title=f"{pt} - 0{i}", kind="anime", work_id=w.id, parsed_title=pt,
+                seeder_pct=0.5, seeders=5, leechers=0, size_bytes=1,
+                magnet=f"magnet:?xt=urn:btih:{i:040x}",
+            ))
+        db.commit()
+        return w
+
+    def test_the_romaji_variant_is_asked_too(self, db_session, searches):
+        w = self._with_variants(db_session)
+        sweep_mod.sweep(db_session, w)
+        assert any("sousou no frieren" in q.lower() for q in searches), searches
+
+    def test_the_canonical_title_is_still_asked(self, db_session, searches):
+        w = self._with_variants(db_session)
+        sweep_mod.sweep(db_session, w)
+        assert any("frieren: beyond" in q.lower() for q in searches), searches
+
+    def test_near_duplicate_variants_are_not_asked_twice(self, db_session, searches):
+        # "Frieren Beyond Journeys End" is the display title minus punctuation;
+        # asking both is the same question twice at four indexers.
+        w = self._with_variants(db_session)
+        sweep_mod.sweep(db_session, w)
+        asked = [q.lower() for q in searches]
+        assert not any("frieren beyond journeys end" in q for q in asked), searches
+
+    def test_the_request_count_is_bounded(self, db_session, searches):
+        # A show with twenty naming variants must not fire forty searches on a
+        # card open. Cap: 3 names × 2 terms.
+        from miru.catalog.models import CatalogRelease
+
+        w = _work(db_session, "Show")
+        for i in range(20):
+            db_session.add(CatalogRelease(
+                info_hash=f"{i+100:040x}", indexer="Nyaa.si", guid=f"h{i}",
+                title=f"Variant {i} - 01", kind="anime", work_id=w.id,
+                parsed_title=f"Variant {i}", seeder_pct=0.5, seeders=5,
+                leechers=0, size_bytes=1, magnet=f"magnet:?xt=urn:btih:{i+100:040x}",
+            ))
+        db_session.commit()
+        sweep_mod.sweep(db_session, w)
+        assert len(searches) <= 6, f"{len(searches)} searches for one card open"
+
+
+class TestTheSheetKnowsASweepIsComing:
+    def test_the_payload_says_when_a_sweep_was_kicked(self, client, db_session, monkeypatch):
+        # The sweep is async; without this flag the open sheet shows the packs
+        # only after a close-and-reopen, which reads as "it isn't fetching".
+        from miru.catalog import router as mod
+
+        monkeypatch.setattr(mod, "_request_sweep", lambda wid: None)
+        w = _work(db_session, "Never Swept")
+        assert client.get(f"/api/catalog/works/{w.id}").json()["sweep_started"] is True
+
+    def test_a_recently_swept_work_promises_nothing(self, client, db_session, monkeypatch):
+        from datetime import datetime, timezone
+
+        from miru.catalog import router as mod
+
+        monkeypatch.setattr(mod, "_request_sweep", lambda wid: None)
+        w = _work(db_session, "Fresh")
+        w.swept_at = datetime.now(timezone.utc)
+        db_session.commit()
+        assert client.get(f"/api/catalog/works/{w.id}").json()["sweep_started"] is False

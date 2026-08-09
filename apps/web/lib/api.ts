@@ -391,6 +391,9 @@ export type WorkDetail = CatalogWork & {
     best_quality: CatalogRelease | null;
   };
   releases: CatalogRelease[];
+  /** True when opening this card kicked a background pack sweep — the sheet
+   *  re-fetches while the results land, so packs appear without a reopen. */
+  sweep_started: boolean;
   /** Episodes already in the library, so the sheet marks a ✓ instead of
    *  offering a re-download. */
   owned_episodes: { episode: number; episode_end: number | null; file_id: number }[];
@@ -439,6 +442,8 @@ export const getWork = (id: number) => get<WorkDetail>(`/api/catalog/works/${id}
 export const KIND_LABEL: Record<string, string> = {
   all: "All",
   anime: "Anime",
+  "anime-series": "Anime Series",
+  "anime-movies": "Anime Movies",
   movie: "Movies",
   series: "Series",
 };

@@ -21,7 +21,11 @@ import { Button, ButtonLink, EmptyState, SectionHeading, artTint } from "@/compo
 import { Play } from "@/components/icons";
 import { isComplete, useContinueWatching } from "@/lib/store";
 
-const KINDS = ["all", "anime", "movie", "series"] as const;
+// The split the user asked for by name: anime series and anime films are
+// different browsing intents, and "Movies" means live-action — anime films
+// carry kind=anime since the provider took over identity. The pill row
+// scrolls sideways on a phone rather than dropping a filter.
+const KINDS = ["all", "anime-series", "anime-movies", "movie", "series"] as const;
 
 /**
  * The browse wall.
@@ -124,14 +128,18 @@ export function Wall({ data, files }: { data: WallData; files: MediaFile[] }) {
       {/* Filters and freshness. The freshness line is not decoration: a refresh
           that quietly died looks exactly like one that is up to date. */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by kind">
+        <div
+          className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0"
+          role="group"
+          aria-label="Filter by kind"
+        >
           {KINDS.map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => switchKind(k)}
               aria-pressed={kind === k}
-              className={`min-h-11 rounded-full border px-4 text-[12.5px] font-bold transition-colors ${
+              className={`min-h-11 shrink-0 whitespace-nowrap rounded-full border px-4 text-[12.5px] font-bold transition-colors ${
                 kind === k
                   ? "border-primary bg-primary text-white"
                   : "border-border text-text-dim hover:border-border-hover hover:text-text"

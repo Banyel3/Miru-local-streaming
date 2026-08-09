@@ -162,6 +162,29 @@ export function ReleaseSheet({
     };
   }, [work.id]);
 
+  // The pack sweep runs in the background after the card opens. Re-fetch while
+  // it lands so the batches appear in THIS sheet — without this they were only
+  // visible after close-and-reopen, which read as "it isn't fetching the
+  // complete sets". Two refetches cover the sweep's few-second lifetime; the
+  // user's own selection is never overwritten.
+  useEffect(() => {
+    if (!detail?.sweep_started) return;
+    let live = true;
+    const timers = [6000, 16000].map((ms) =>
+      setTimeout(async () => {
+        const res = await loadWork(work.id);
+        if (!live || "error" in res) return;
+        setDetail((old) =>
+          old && res.work.releases.length > old.releases.length ? res.work : old,
+        );
+      }, ms),
+    );
+    return () => {
+      live = false;
+      timers.forEach(clearTimeout);
+    };
+  }, [detail?.sweep_started, work.id]);
+
   // Escape pops one level and only closes at the top, so backing out of an
   // episode does not also throw away the show.
   useEffect(() => {

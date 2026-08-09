@@ -92,6 +92,14 @@ def decode_cursor(cursor: str | None) -> tuple[str, int] | None:
         return None
 
 
+# The anime split. NULL is not MOVIE, but SQL will not say so — an unresolved
+# work has no format at all, and `!= 'MOVIE'` drops every one of them off the
+# wall. A weekly show is what most anime is, so unresolved lands with the
+# series.
+_IS_FILM = CatalogWork.format == "MOVIE"
+_IS_NOT_FILM = (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE")
+
+
 def _base(kind: str | None, rail: str | None = None) -> Select:
     # Adult titles never reach a rail. The provider says so — AniList
     # `isAdult`, TMDB `adult` — because the category cannot: Nyaa files adult
@@ -100,22 +108,26 @@ def _base(kind: str | None, rail: str | None = None) -> Select:
     q = select(CatalogWork).where(
         CatalogWork.release_count > 0, CatalogWork.adult.is_(False)
     )
+
+    # The top-level split the pills use. The provider decides kind and format,
+    # so both walls are derivable; `anime` stays valid for old links and keeps
+    # its films-in-a-rail shape below.
+    if kind == "anime-movies":
+        return q.where(CatalogWork.kind == "anime", _IS_FILM)
+    if kind == "anime-series":
+        return q.where(CatalogWork.kind == "anime", _IS_NOT_FILM)
+
     if kind and kind != "all":
         q = q.where(CatalogWork.kind == kind)
 
-    # Only the anime wall splits on format: a live-action film already has its
-    # own kind, and filtering the Movies wall by MOVIE would leave it showing a
-    # subset of itself.
+    # Only the mixed anime wall splits on format per rail: a live-action film
+    # already has its own kind, and filtering the Movies wall by MOVIE would
+    # leave it showing a subset of itself.
     if kind == "anime":
         if rail == "films":
-            q = q.where(CatalogWork.format == "MOVIE")
+            q = q.where(_IS_FILM)
         elif rail is not None:
-            # NULL is not MOVIE, but SQL will not say so — an unresolved work
-            # has no format at all, and `!= 'MOVIE'` drops every one of them off
-            # the wall.
-            q = q.where(
-                (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE")
-            )
+            q = q.where(_IS_NOT_FILM)
     return q
 
 

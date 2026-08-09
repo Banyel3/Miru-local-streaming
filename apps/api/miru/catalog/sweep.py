@@ -24,10 +24,13 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func, select as sa_select
+
 from miru.acquisition.prowlarr import provider
 from miru.acquisition.provider import AcquisitionError
 from miru.catalog.ingest import ingest_search
-from miru.catalog.models import CatalogWork
+from miru.catalog.models import CatalogRelease, CatalogWork
+from miru.catalog.enrich import _loose
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +69,43 @@ def due(work: CatalogWork, now: datetime | None = None) -> bool:
     return (now or datetime.now(timezone.utc)) - last >= WINDOW
 
 
+# At most this many names per sweep. A card open must stay a handful of
+# background requests, not a fan-out per naming variant.
+MAX_NAMES = 3
+
+
+def names_for(db: Session, work: CatalogWork) -> list[str]:
+    """The names this show actually goes by on the indexers.
+
+    Measured live: 'Frieren: Beyond Journey's End batch' finds 13 results and
+    'Sousou no Frieren batch' finds 49 — packs are named by fansub groups in
+    romaji, and the canonical title alone misses most of them. The variants are
+    already in the catalogue: the releases' parsed titles are the strings the
+    indexers really carry. Most frequent first, near-duplicates (same
+    normalised form, punctuation aside) folded together.
+    """
+    # _loose, not normalised: "Journey's" vs "Journeys" is one apostrophe and
+    # the same show — the exact miss that cost the resolution guard 83% of its
+    # matches before e2888c9.
+    seen = {_loose(work.display_title)}
+    names = [work.display_title]
+    rows = db.execute(
+        sa_select(CatalogRelease.parsed_title, func.count().label("n"))
+        .where(CatalogRelease.work_id == work.id, CatalogRelease.parsed_title.isnot(None))
+        .group_by(CatalogRelease.parsed_title)
+        .order_by(func.count().desc())
+    ).all()
+    for title, _ in rows:
+        if len(names) >= MAX_NAMES:
+            break
+        key = _loose(title)
+        if key in seen or not key:
+            continue
+        seen.add(key)
+        names.append(title)
+    return names
+
+
 def sweep(db: Session, work: CatalogWork) -> int:
     """Look for complete packs of this show. Returns how many results were seen.
 
@@ -77,22 +117,23 @@ def sweep(db: Session, work: CatalogWork) -> int:
 
     title = work.display_title.strip()
     seen = 0
-    for term in TERMS:
-        try:
-            results = provider.search(f"{title} {term}", LIMIT)
-        except AcquisitionError as exc:
-            log.info("pack sweep for %r (%s) found nothing: %s", title, term, exc)
-            continue
-        except Exception:  # noqa: BLE001 — a sweep must never break the card
-            log.exception("pack sweep for %r (%s) failed", title, term)
-            continue
+    for name in names_for(db, work):
+        for term in TERMS:
+            try:
+                results = provider.search(f"{name} {term}", LIMIT)
+            except AcquisitionError as exc:
+                log.info("pack sweep %r (%s) found nothing: %s", name, term, exc)
+                continue
+            except Exception:  # noqa: BLE001 — a sweep must never break the card
+                log.exception("pack sweep %r (%s) failed", name, term)
+                continue
 
-        seen += len(results)
-        try:
-            ingest_search(db, results)
-        except Exception:  # noqa: BLE001 — nor may writing what it found
-            log.exception("could not ingest pack results for %r", title)
-            db.rollback()
+            seen += len(results)
+            try:
+                ingest_search(db, results)
+            except Exception:  # noqa: BLE001 — nor may writing what it found
+                log.exception("could not ingest pack results for %r", name)
+                db.rollback()
 
     # Stamped even when nothing came back. A show with no packs must not be
     # searched again on every single open.
