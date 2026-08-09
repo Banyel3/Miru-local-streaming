@@ -245,10 +245,15 @@ class QBittorrentProvider:
             error=None,
         )
 
-    def cancel(self, job_id: str) -> None:
-        # deleteFiles=false: cancelling a download should not silently remove a
-        # file the user may have already started watching.
-        _call("/torrents/delete", {"hashes": job_id.lower(), "deleteFiles": "false"})
+    def cancel(self, job_id: str, delete_files: bool = False) -> None:
+        # deleteFiles defaults to false: cancelling a download must not
+        # silently remove a file the user may be mid-watch on. Only the
+        # ephemeral janitor opts in — a stream nobody kept is the one thing
+        # whose bytes exist to be thrown away.
+        _call(
+            "/torrents/delete",
+            {"hashes": job_id.lower(), "deleteFiles": "true" if delete_files else "false"},
+        )
 
     def set_paused(self, job_id: str, paused: bool) -> None:
         """Pause or resume. qBittorrent renamed these endpoints in v5, so both

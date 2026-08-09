@@ -35,6 +35,23 @@ def _walk(roots: list[Path]):
                 yield path
 
 
+def _ephemeral_names(db: Session) -> set[str]:
+    """Files the mover must leave alone: streams nobody has kept.
+
+    Built from `download_name`, which the downloads poll learned from the
+    downloader — the torrent title and the file inside it are different
+    strings, so nothing here guesses.
+    """
+    from miru.catalog.models import CatalogWork
+
+    rows = db.scalars(
+        select(CatalogWork.download_name).where(
+            CatalogWork.ephemeral.is_(True), CatalogWork.download_name.isnot(None)
+        )
+    )
+    return {name.rsplit("/", 1)[-1] for name in rows}
+
+
 def scan(db: Session, roots: list[Path] | None = None) -> dict:
     roots = roots if roots is not None else settings.libraries
 
@@ -43,7 +60,12 @@ def scan(db: Session, roots: list[Path] | None = None) -> dict:
     moved = {"promoted": 0, "waiting": 0}
     promoted_names: list[str] = []
     if settings.incoming and roots:
-        moved = promote(settings.incoming, roots[0], settings.incoming_settle_seconds)
+        moved = promote(
+            settings.incoming,
+            roots[0],
+            settings.incoming_settle_seconds,
+            skip=_ephemeral_names(db),
+        )
         promoted_names = moved.pop("names", [])
     existing = {f.path: f for f in db.scalars(select(MediaFile))}
     added = updated = unchanged = 0

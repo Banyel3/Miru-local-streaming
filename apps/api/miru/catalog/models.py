@@ -109,6 +109,18 @@ class CatalogWork(Base):
     swept_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Watch Now streams; only Keep fills the library. An ephemeral download is
+    # never promoted, and the janitor deletes it once nobody has streamed it
+    # for a day — the Stremio model, because true no-disk streaming over
+    # BitTorrent exists in no client worth using.
+    ephemeral: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The filename the downloader actually wrote, learned from the first poll
+    # that sees it. It is what the mover's skip-list is built from — the
+    # torrent title and the file inside it are different strings.
+    download_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    last_streamed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # AniList's own word: TV | MOVIE | OVA | ONA | SPECIAL. This is what tells a
     # film from a weekly show inside the anime rail — *One Piece Film: Red* is

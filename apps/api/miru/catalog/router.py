@@ -345,6 +345,10 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
     # never fires and this work sits on the wall offering to download itself
     # again, forever.
     work.download_job_id = job.id
+    # Watch Now streams: nothing joins the library unless the user says Keep.
+    # Download IS the keep — pressing it on something already streaming does
+    # not restart anything, it just changes what happens when it finishes.
+    work.ephemeral = grab.watch
     db.commit()
 
     return {
@@ -354,6 +358,23 @@ def start_download(work_id: int, grab: Grab, db: Session = Depends(get_db)):
         # False means Watch Now can only honestly mean "when it finishes".
         "streaming": supports_streaming(),
     }
+
+
+@router.post("/downloads/{job_id}/keep")
+def keep(job_id: str, db: Session = Depends(get_db)):
+    """Keep a stream: the next poll promotes it into the library as a download.
+
+    Keyed on the job id because the player is the thing that offers Keep, and
+    the infohash is the identity it holds.
+    """
+    work = db.execute(
+        select(CatalogWork).where(CatalogWork.download_job_id == job_id.lower())
+    ).scalar_one_or_none()
+    if work is None:
+        raise HTTPException(404, "no such download")
+    work.ephemeral = False
+    db.commit()
+    return {"ok": True}
 
 
 def _link_by_filename(db: Session, work: CatalogWork) -> None:
@@ -486,10 +507,17 @@ def downloads(db: Session = Depends(get_db)):
             out.append(_forgotten(w, "The downloader no longer has this torrent."))
             continue
 
+        # The filename the downloader wrote, learned once. The mover's
+        # skip-list for ephemeral streams is built from it.
+        if s.name and not w.download_name:
+            w.download_name = s.name
+
         # The moment a job reports done is the moment to promote it, rather than
         # letting it wait for the next periodic pass. Guarded so ten finishing
-        # downloads start one scan, not ten.
-        if s.state == "done" and w.library_file_id is None:
+        # downloads start one scan, not ten. An EPHEMERAL work is exactly the
+        # one that must not be promoted — that is how Watch Now filled the
+        # library; the janitor owns its cleanup instead.
+        if s.state == "done" and w.library_file_id is None and not w.ephemeral:
             _request_scan()
             _link_by_filename(db, w)
 

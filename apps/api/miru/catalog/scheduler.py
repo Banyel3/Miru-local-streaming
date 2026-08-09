@@ -77,11 +77,28 @@ async def _loop(interval: float) -> None:
             # was never seen and never could be. Prowlarr is on the laptop now,
             # and only DOWNLOADS depend on the PC.
             await refresh_now()
+            # Ride the same cadence: delete the ephemeral streams nobody kept.
+            # Its own try — a janitor failure must not look like a refresh one.
+            try:
+                await asyncio.to_thread(_sweep_ephemeral_once)
+            except Exception:  # noqa: BLE001
+                log.exception("ephemeral sweep raised")
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad pass must not kill the loop
             log.exception("catalog refresh raised")
         await asyncio.sleep(interval)
+
+
+def _sweep_ephemeral_once() -> None:
+    from miru.catalog.janitor import sweep_ephemeral
+    from miru.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sweep_ephemeral(db)
+    finally:
+        db.close()
 
 
 def start() -> None:

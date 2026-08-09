@@ -173,7 +173,10 @@ class ProwlarrAria2Provider:
             error=r.get("errorMessage") or None,
         )
 
-    def cancel(self, job_id: str) -> None:
+    def cancel(self, job_id: str, delete_files: bool = False) -> None:
+        # aria2 has no delete-with-data call; the flag is accepted so the
+        # ephemeral janitor cannot TypeError on the fallback backend, and the
+        # file cleanup is the mover's problem there.
         # `remove` stops an active download; a finished or errored one is only
         # removable from the result list, so fall through rather than error.
         try:

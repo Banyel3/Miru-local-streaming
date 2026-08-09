@@ -105,7 +105,12 @@ def link_catalog_work(db, path, file_id: int) -> None:
         log.warning("could not link %s to a catalog work", path.name, exc_info=True)
 
 
-def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dict:
+def promote(
+    incoming: Path,
+    library: Path,
+    settle_seconds: float = 120.0,
+    skip: set[str] | None = None,
+) -> dict:
     """Move every settled entry from incoming into the library.
 
     Returns counts for the job payload. Never raises for one bad entry — a
@@ -123,6 +128,13 @@ def promote(incoming: Path, library: Path, settle_seconds: float = 120.0) -> dic
 
         if not is_settled(entry, settle_seconds):
             waiting += 1
+            continue
+
+        if skip and entry.name in skip:
+            # An ephemeral stream: watched, not kept. Left where it is for the
+            # janitor — promoted, it would be exactly the "I clicked Watch Now
+            # and it filled my library" the mode exists to end.
+            skipped += 1
             continue
 
         if not holds_video(entry):

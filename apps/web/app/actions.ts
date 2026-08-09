@@ -122,6 +122,9 @@ export async function liveStatus(infoHash: string): Promise<
        *  follows this rather than 404ing on a stream that has correctly moved
        *  out of incoming. */
       library_file_id: number | null;
+      /** False once Keep (or Download) was pressed — the banner reads it so a
+       *  kept stream does not offer Keep again after a reload. */
+      ephemeral: boolean;
     }
   | { error: string }
 > {
@@ -176,6 +179,19 @@ export async function startDownloadDirect(
 }
 
 /** Pause, resume or stop a download. Cancel keeps the bytes already on disk. */
+export async function keepStream(jobId: string): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetch(`${API_INTERNAL}/api/catalog/downloads/${jobId}/keep`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { error: "Can't reach the API." };
+  }
+}
+
 export async function downloadAction(
   jobId: string,
   action: "pause" | "resume" | "cancel",

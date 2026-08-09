@@ -67,6 +67,35 @@ def info_hash_key(info_hash: str) -> int:
     return int.from_bytes(hashlib.sha1(info_hash.encode()).digest()[:6], "big")
 
 
+_touched: dict[str, float] = {}
+
+
+def _touch_last_streamed(info_hash: str) -> None:
+    now = time.monotonic()
+    if now - _touched.get(info_hash, 0.0) < 60:
+        return
+    _touched[info_hash] = now
+    try:
+        from datetime import datetime, timezone
+
+        from miru.catalog.models import CatalogWork
+        from miru.core.db import SessionLocal
+        from sqlalchemy import update
+
+        db = SessionLocal()
+        try:
+            db.execute(
+                update(CatalogWork)
+                .where(CatalogWork.download_job_id == info_hash)
+                .values(last_streamed_at=datetime.now(timezone.utc))
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001 — a failed touch must not fail the stream
+        log.debug("could not touch last_streamed_at for %s", info_hash)
+
+
 def _read_exactly(
     path: Path,
     *,
@@ -214,7 +243,18 @@ def live_status(info_hash: str, db: Session = Depends(get_db)):
         # — at the exact moment the film became fully watchable. This is what the
         # page follows instead of showing an error.
         "library_file_id": _promoted_to(db, info_hash),
+        # Whether this stream is being kept. The player's Keep banner reads it
+        # so a kept download does not offer Keep again after a reload.
+        "ephemeral": _is_ephemeral(db, info_hash),
     }
+
+
+def _is_ephemeral(db: Session, info_hash: str) -> bool:
+    return bool(
+        db.execute(
+            select(CatalogWork.ephemeral).where(CatalogWork.download_job_id == info_hash)
+        ).scalar_one_or_none()
+    )
 
 
 def _promoted_to(db: Session, info_hash: str) -> int | None:
@@ -330,6 +370,11 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
 
     length = end - start + 1
     body = lambda: _read_exactly(path, start=start, length=length)  # noqa: E731
+
+    # The janitor ages ephemeral streams against this. Throttled: a player
+    # fetches many ranges a minute and one UPDATE per range is a write per
+    # seek for a value nobody reads at second granularity.
+    _touch_last_streamed(info_hash)
 
     return StreamingResponse(
         body(),

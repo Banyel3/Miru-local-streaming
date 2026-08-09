@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC, fileSize } from "@/lib/api";
 import { canPlayNow, endedForReal, resumeSrc, streamState } from "@/lib/live";
-import { downloadAction, liveStatus, makeWatchable } from "@/app/actions";
+import { downloadAction, keepStream, liveStatus, makeWatchable } from "@/app/actions";
 import { Player } from "@/app/watch/[id]/Player";
 import { Button, ButtonLink, ProgressBar } from "@/components/ui";
 
@@ -39,6 +39,7 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
   const [paused, setPaused] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [stopped, setStopped] = useState(false);
+  const [kept, setKept] = useState(false);
   // Bumped when the player runs out of bytes on a file that is still growing.
   // It changes the URL, which is the only thing that makes the browser go back
   // for the pieces that have landed since — see lib/live.ts.
@@ -58,6 +59,7 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
       } else {
         setError(null);
         setStatus(res);
+        if (!res.ephemeral) setKept(true);
 
         // The download finished and the mover took it out of incoming, so the
         // live stream no longer has it — which is correct, and used to mean a
@@ -196,6 +198,29 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
           Back to browse
         </ButtonLink>
       </div>
+
+      {/* The stream-only contract, honoured: Watch Now keeps nothing. Keep is
+          the one button that changes that, and it says what it did. */}
+      {!kept ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            onClick={async () => {
+              const res = await keepStream(infoHash);
+              if (!("error" in res)) setKept(true);
+            }}
+          >
+            Keep in library
+          </Button>
+          <p className="text-[12.5px] text-text-muted">
+            Otherwise this stream is cleaned up after you finish watching.
+          </p>
+        </div>
+      ) : (
+        <p className="text-[13px] font-bold text-text-dim">
+          Keeping it — it joins your library when the download completes.
+        </p>
+      )}
 
       {status?.sequential === false && (
         <div className="flex flex-wrap items-center gap-3">
