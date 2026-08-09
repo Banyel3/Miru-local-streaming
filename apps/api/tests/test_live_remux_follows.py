@@ -17,6 +17,13 @@ import pytest
 
 from miru.streaming import remux
 
+# Imported at module scope on purpose: models register on Base at import time,
+# and the db_session fixture's create_all only makes tables for what is already
+# registered. Importing these inside a test body means "no such table" for
+# whichever test file happens to run first.
+from miru.catalog.models import CatalogWork  # noqa: E402
+from miru.library.models import MediaFile  # noqa: E402
+
 
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch, tmp_path):
@@ -420,12 +427,12 @@ class TestPromotionActuallyAdopts:
         in there is a test failure here, not a log line nobody reads.
         """
         from miru.catalog import router as mod
-        from miru.catalog.models import CatalogWork
-        from miru.library.models import MediaFile
 
         lib_file = tmp_path / "Film.2026.mkv"
         lib_file.write_bytes(b"x" * 100)
-        db_session.add(MediaFile(id=91, path=str(lib_file), title="Film"))
+        db_session.add(
+            MediaFile(id=91, path=str(lib_file), title="Film", size_bytes=100, mtime=0.0)
+        )
         w = CatalogWork(
             kind="movie", normalised_title="film", display_title="Film",
             download_job_id="9d86667f49f42712909c2888d346b37a17c44191",
