@@ -446,3 +446,50 @@ class TestSearchGrabsGetTheSameLifecycle:
             "result_id": "magnet:?xt=urn:btih:" + "ff" + "0" * 38, "watch": True,
         })
         assert res.status_code == 200
+
+
+class TestTheSkipListDoesNotDependOnAnOpenBrowserTab:
+    """The organic hole behind the recurring promotion bug.
+
+    download_name is learned by the downloads POLL — which only runs while a
+    page is open. Watch Now, close the tab, let the download finish: no poll
+    ever learns the name, the skip-list stays empty, and the periodic scan
+    promotes the stream into the library. The scan now asks the downloader
+    directly for the on-disk names of ephemeral works, keyed by the hash known
+    since grab time.
+    """
+
+    def test_the_scan_fills_missing_names_from_the_downloader(
+        self, db_session, monkeypatch
+    ):
+        from miru.library import scanner as mod
+        from miru.acquisition.provider import DownloadStatus
+
+        w = _work(db_session, job="e1" + "0" * 38, ephemeral=True)  # no name
+        named = _work(db_session, "Named", job="e2" + "0" * 38, ephemeral=True,
+                      download_name="Known.mkv")
+
+        class FakeDl:
+            def statuses(self):
+                return {"e1" + "0" * 38: DownloadStatus(
+                    id="e1" + "0" * 38, state="downloading", progress=0.4,
+                    name="Torrent Title", downloaded_bytes=1, total_bytes=2,
+                    speed_bps=1, eta_seconds=None, error=None,
+                    content_name="www.SomeSite - Real Folder Name",
+                )}
+
+        monkeypatch.setattr(mod, "_downloader_statuses", lambda: FakeDl().statuses())
+        names = mod._ephemeral_names(db_session)
+        assert "www.SomeSite - Real Folder Name" in names
+        assert "Known.mkv" in names
+
+    def test_a_sleeping_pc_still_yields_the_names_already_known(
+        self, db_session, monkeypatch
+    ):
+        from miru.library import scanner as mod
+
+        _work(db_session, "Named", job="e3" + "0" * 38, ephemeral=True,
+              download_name="Known.mkv")
+        monkeypatch.setattr(mod, "_downloader_statuses",
+                            lambda: (_ for _ in ()).throw(RuntimeError("asleep")))
+        assert mod._ephemeral_names(db_session) == {"Known.mkv"}

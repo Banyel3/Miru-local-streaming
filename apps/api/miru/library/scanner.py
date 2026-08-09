@@ -35,21 +35,43 @@ def _walk(roots: list[Path]):
                 yield path
 
 
+def _downloader_statuses():
+    """Seam for the live lookup below; monkeypatched in tests."""
+    from miru.acquisition.downloader import downloader
+
+    return downloader().statuses()
+
+
 def _ephemeral_names(db: Session) -> set[str]:
     """Files the mover must leave alone: streams nobody has kept.
 
-    Built from `download_name`, which the downloads poll learned from the
-    downloader — the torrent title and the file inside it are different
-    strings, so nothing here guesses.
+    Two sources, both needed. `download_name` is what the downloads poll
+    learned — but the poll only runs while a page is open, so Watch Now +
+    close-the-tab left the name unlearned forever and the scan promoted the
+    stream into the library. The downloader itself is therefore asked live for
+    the on-disk names of ephemeral works, keyed by the hash known since grab
+    time; a sleeping PC degrades to the names already recorded.
     """
     from miru.catalog.models import CatalogWork
 
-    rows = db.scalars(
-        select(CatalogWork.download_name).where(
-            CatalogWork.ephemeral.is_(True), CatalogWork.download_name.isnot(None)
+    works = db.execute(
+        select(CatalogWork.download_job_id, CatalogWork.download_name).where(
+            CatalogWork.ephemeral.is_(True), CatalogWork.download_job_id.isnot(None)
         )
-    )
-    return {name.rsplit("/", 1)[-1] for name in rows}
+    ).all()
+    names = {n.rsplit("/", 1)[-1] for _, n in works if n}
+
+    missing = [h for h, n in works if not n]
+    if missing:
+        try:
+            live = _downloader_statuses()
+        except Exception:  # noqa: BLE001 — asleep PC = the names we have
+            return names
+        for h in missing:
+            s = live.get((h or "").lower())
+            if s and (s.content_name or s.name):
+                names.add((s.content_name or s.name).rsplit("/", 1)[-1])
+    return names
 
 
 def scan(db: Session, roots: list[Path] | None = None) -> dict:
