@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ComponentProps } from "react";
-import { API_PUBLIC } from "@/lib/api";
+import { API_PUBLIC, guardSession } from "@/lib/api";
 import { RemuxStatus, remuxWait } from "@/lib/live";
 import { Player } from "./Player";
 import { ButtonLink } from "@/components/ui";
@@ -35,9 +35,9 @@ export function RemuxWait({
 
     const tick = async () => {
       try {
-        const res = await fetch(`${API_PUBLIC}/api/stream/${fileId}/status`, {
-          cache: "no-store",
-        });
+        const res = guardSession(
+          await fetch(`${API_PUBLIC}/api/stream/${fileId}/status`, { cache: "no-store" }),
+        );
         if (!live) return;
         if (res.ok) setStatus(await res.json());
       } catch {

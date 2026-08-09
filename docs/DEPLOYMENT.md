@@ -382,3 +382,53 @@ by mirrored networking mode — see §5.
 
 **Wake-on-LAN was dropped**, so `SETUP.md` §6 (disable sleep on the PC) stands
 unchanged. Revisit only if the PC moves to wired Ethernet.
+
+## Going public — Funnel + magic-link auth
+
+Design and review: `docs/plans/go-live-auth.md`. The public door is Tailscale
+Funnel forwarding to nginx's gated block on `127.0.0.1:8081`
+(`deploy/nginx/miru-public.conf`); the tailnet block on :80 stays ungated.
+
+**One-time setup, in order:**
+
+1. **Resend**: create an account, add a sending domain (Resend will not
+   deliver to other people from an unverified one — the free onboarding
+   sender only mails yourself), publish the DKIM/SPF records it gives you.
+2. **Env** (root `.env`):
+   `MIRU_ALLOWED_EMAILS=friend@example.com,other@example.com`
+   `MIRU_RESEND_API_KEY=re_…`  ·  `MIRU_MAIL_FROM=miru@yourdomain.tld`
+   `MIRU_PUBLIC_ORIGIN=https://ban-1.tail88f195.ts.net`
+   `MIRU_TOKEN` stays EMPTY — it is a global API dependency and setting it
+   401s every browser and SSR fetch, including the login flow itself.
+3. **Rotate the qBittorrent password** (PC awake):
+   `python deploy/rotate-qbittorrent-password.py`
+4. **nginx**: install `miru-public.conf` (header comment has the commands),
+   `sudo nginx -t && sudo systemctl reload nginx`.
+5. **Restart the API** so the auth tables exist: `systemctl --user restart miru-api`.
+6. **Funnel on**: `tailscale funnel --bg 8081` (needs the funnel node
+   attribute enabled once in the admin console).
+
+**Gate checklist — run after every change to the public block (it has no
+pytest; this repo's worst outage was an nginx subtlety):**
+
+```bash
+G() { curl -s -o /dev/null -w "%{http_code}" -H "Host: ban-1.tail88f195.ts.net" "$@"; }
+G http://127.0.0.1:8081/                       # 302 → /login
+G http://127.0.0.1:8081/api/library            # 401, plain — never HTML
+G http://127.0.0.1:8081/hls                    # 401, plain
+G http://127.0.0.1:8081/login                  # 200 without any cookie
+G -X POST -H 'Content-Type: application/json' -d '{"email":"x@y.z"}' \
+  http://127.0.0.1:8081/api/auth/request       # 200 — and identical for any address
+# then with a real cookie from a login: / and /api/library and /hls all 200,
+# and a Server Action POST (e.g. Watch Now) completes through the gate.
+```
+
+**Uninviting someone**: remove the address from `MIRU_ALLOWED_EMAILS` and
+restart the API — their live sessions die within a minute (the gate re-checks
+the allowlist). Funnel off entirely: `tailscale funnel --bg off 8081`.
+
+**Known ceiling (accepted at review D3)**: Funnel relays all bytes through
+Tailscale's servers. The NVENC ladder (~3–6.7 Mbps) streams fine; 4K
+direct-play remuxes may buffer. If that starts to hurt, the fallback is
+port-forwarding 443 to nginx with a real domain — the gated block is
+exposure-agnostic, only the front door changes.

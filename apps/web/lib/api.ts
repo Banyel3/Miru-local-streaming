@@ -108,6 +108,17 @@ export const getHealth = () => get<{ ok: boolean; libraries: string[] }>("/api/h
 
 export const streamUrl = (id: number) => `${API_PUBLIC}/api/stream/${id}`;
 
+/** The public gate answers expired sessions with a plain 401 on /api and
+ *  /hls (never login HTML — that shape killed players before). Pollers pass
+ *  their responses through here so a signed-out browser lands on /login
+ *  instead of looping on a dead request. */
+export function guardSession(res: Response): Response {
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.href = "/login";
+  }
+  return res;
+}
+
 export type SubtitleTrack = {
   index: number;
   label: string;

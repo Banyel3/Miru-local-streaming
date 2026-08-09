@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from miru.core.auth import require_token
+from miru.auth.router import router as auth_router
 from miru.core.config import settings
 from miru.core.db import create_all
 from miru.acquisition.router import router as acquisition_router
@@ -53,6 +54,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(acquisition_router)
 app.include_router(catalog_router)
 app.include_router(posters_router)

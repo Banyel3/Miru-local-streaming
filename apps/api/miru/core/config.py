@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     # encoder are then reported unavailable rather than failing at play time.
     transcode_worker: str = ""
 
+    # Going public: who may sign in, and how the sign-in email leaves.
+    # Comma-separated addresses; empty means nobody signs in (the public
+    # gate then rejects everyone, which is the safe default).
+    allowed_emails: str = ""
+    resend_api_key: str = ""
+    mail_from: str = ""
+    # The origin printed into magic links — the Funnel hostname.
+    public_origin: str = ""
+
     # Where the BROWSER should reach the worker. Empty falls back to
     # transcode_worker, which is the direct cross-origin address and works only
     # without a reverse proxy. Behind nginx this is a same-origin path, which is

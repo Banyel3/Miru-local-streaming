@@ -89,6 +89,12 @@ async def _loop(interval: float) -> None:
                 await asyncio.to_thread(_sweep_completion_once)
             except Exception:  # noqa: BLE001
                 log.exception("completion sweep raised")
+            # Auth housekeeping: expired login tokens, dead sessions, stale
+            # rate buckets. Cheap deletes on the same cadence.
+            try:
+                await asyncio.to_thread(_purge_auth_once)
+            except Exception:  # noqa: BLE001
+                log.exception("auth purge raised")
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad pass must not kill the loop
@@ -103,6 +109,17 @@ def _sweep_ephemeral_once() -> None:
     db = SessionLocal()
     try:
         sweep_ephemeral(db)
+    finally:
+        db.close()
+
+
+def _purge_auth_once() -> None:
+    from miru.auth.service import purge_expired
+    from miru.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        purge_expired(db)
     finally:
         db.close()
 

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { API_PUBLIC, fileSize } from "@/lib/api";
+import { API_PUBLIC, fileSize, guardSession } from "@/lib/api";
 import { canPlayNow, endedForReal, resumeSrc, startupState, streamState } from "@/lib/live";
 import { downloadAction, keepStream, liveStatus, makeWatchable } from "@/app/actions";
 import { Player } from "@/app/watch/[id]/Player";
@@ -84,10 +84,12 @@ export function LiveWatch({ infoHash }: { infoHash: string }) {
         // Ask the stream itself, rather than assuming the bytes are enough.
         if (res.watchable && !streamReady) {
           try {
-            const probe = await fetch(`${API_PUBLIC}/api/stream/live/${infoHash}`, {
-              headers: { Range: "bytes=0-1" },
-              cache: "no-store",
-            });
+            const probe = guardSession(
+              await fetch(`${API_PUBLIC}/api/stream/live/${infoHash}`, {
+                headers: { Range: "bytes=0-1" },
+                cache: "no-store",
+              }),
+            );
             const what = streamState(probe.status);
             if (!live) return;
             if (what === "ready") setStreamReady(true);
