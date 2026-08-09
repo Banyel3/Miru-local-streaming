@@ -80,6 +80,13 @@ export const Check = ({ className = "size-3" }: P) => (
   </svg>
 );
 
+export const Down = ({ className = "size-[18px]" }: P) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+    <path d="M12 3v12m0 0l-5-5m5 5l5-5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M4 21h16" strokeLinecap="round" />
+  </svg>
+);
+
 export const Menu = ({ className = "size-5" }: P) => (
   <svg className={className} viewBox="0 0 24 24" {...stroke} aria-hidden>
     <path d="M4 7h16M4 12h16M4 17h16" />

@@ -194,13 +194,14 @@ export async function keepStream(jobId: string): Promise<{ ok: true } | { error:
 
 export async function downloadAction(
   jobId: string,
-  action: "pause" | "resume" | "cancel",
+  action: "pause" | "resume" | "cancel" | "dismiss",
+  opts: { deleteFiles?: boolean } = {},
 ): Promise<{ ok: true } | { error: string }> {
   try {
     const res = await fetch(`${API_INTERNAL}/api/catalog/downloads/${jobId}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, delete_files: opts.deleteFiles ?? false }),
       cache: "no-store",
     });
     const body = await res.json().catch(() => null);

@@ -481,6 +481,7 @@ def _forgotten(w, why: str) -> dict:
         "state": "failed",
         "error": why[:200],
         "progress": 0.0,
+        "ephemeral": bool(w.ephemeral),
     }
 
 
@@ -563,6 +564,7 @@ def downloads(db: Session = Depends(get_db)):
                 "speed_bps": s.speed_bps,
                 "eta_seconds": s.eta_seconds,
                 "error": s.error,
+                "ephemeral": bool(w.ephemeral),
                 # aria2 finishing is not the same as the file being playable:
                 # the mover has to promote it out of incoming and the scan has
                 # to index it. Without this gap being named, the card snaps back
@@ -588,6 +590,7 @@ def downloads(db: Session = Depends(get_db)):
                 "speed_bps": s.speed_bps,
                 "eta_seconds": s.eta_seconds,
                 "error": s.error,
+                "ephemeral": False,
                 "in_library": False,
             }
         )
@@ -617,7 +620,20 @@ def make_watchable(info_hash: str):
 
 
 class DownloadAction(BaseModel):
-    action: str  # pause | resume | cancel
+    action: str  # pause | resume | cancel | dismiss
+    # Cancel only: also delete the downloaded files. Explicit, never a default —
+    # a part-downloaded file may be one the user is mid-watch on.
+    delete_files: bool = False
+
+
+def _unlink_download(db: Session, job_id: str) -> None:
+    for w in db.execute(
+        select(CatalogWork).where(CatalogWork.download_job_id == job_id)
+    ).scalars():
+        w.download_job_id = None
+        w.download_name = None
+        w.ephemeral = False
+    db.commit()
 
 
 @router.post("/downloads/{job_id}/action")
@@ -628,19 +644,23 @@ def download_action(job_id: str, body: DownloadAction, db: Session = Depends(get
     part-downloaded file may be one the user is already watching, and stopping a
     download is not a request to destroy it.
     """
-    dl = downloader()
-    if body.action not in {"pause", "resume", "cancel"}:
-        raise HTTPException(422, "action must be pause, resume or cancel")
+    if body.action not in {"pause", "resume", "cancel", "dismiss"}:
+        raise HTTPException(422, "action must be pause, resume, cancel or dismiss")
 
+    if body.action == "dismiss":
+        # A row the downloader has forgotten — the failed state on the page.
+        # Cancel asks the downloader first and 502s on a hash it does not
+        # know, so the one row you most want to remove was the one no action
+        # could touch. Dismiss clears our side and never calls out.
+        _unlink_download(db, job_id)
+        return {"ok": True, "action": "dismiss"}
+
+    dl = downloader()
     try:
         if body.action == "cancel":
-            dl.cancel(job_id)
+            dl.cancel(job_id, delete_files=body.delete_files)
             # The card must stop claiming a download that no longer exists.
-            for w in db.execute(
-                select(CatalogWork).where(CatalogWork.download_job_id == job_id)
-            ).scalars():
-                w.download_job_id = None
-            db.commit()
+            _unlink_download(db, job_id)
         else:
             dl.set_paused(job_id, body.action == "pause")
     except AcquisitionError as exc:

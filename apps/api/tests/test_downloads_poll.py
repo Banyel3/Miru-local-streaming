@@ -132,3 +132,77 @@ class TestTheAsleepPcIsStillHandled:
         assert body["pc_reachable"] is False
         assert body["downloads"] == []
         assert calls["n"] == 0, "asked a machine known to be asleep"
+
+
+class TestManagingDownloadsFromThePage:
+    """The downloads page's contract.
+
+    The list already shows failed rows — a torrent the downloader has forgotten
+    reports as failed so the card can be re-offered. But `cancel` asks the
+    downloader first, and the downloader 502s on a hash it does not know: the
+    one row you most want to remove was the one row no action could touch.
+    """
+
+    def _work(self, db, job, **kw):
+        w = CatalogWork(kind="anime", normalised_title=f"w{job[:6]}",
+                        display_title="Show", download_job_id=job, **kw)
+        db.add(w)
+        db.commit()
+        return w
+
+    def test_a_forgotten_download_can_be_dismissed(self, client, db_session, monkeypatch):
+        from miru.catalog import router as mod
+
+        class Amnesiac:
+            def cancel(self, job_id, delete_files=False):
+                raise AssertionError("dismiss must not touch the downloader")
+
+        monkeypatch.setattr(mod, "downloader", lambda: Amnesiac())
+        w = self._work(db_session, "a" * 40, ephemeral=True, download_name="x.mkv")
+        res = client.post(f"/api/catalog/downloads/{'a' * 40}/action",
+                          json={"action": "dismiss"})
+        assert res.status_code == 200
+        db_session.refresh(w)
+        assert w.download_job_id is None
+        assert w.download_name is None
+        assert w.ephemeral is False
+
+    def test_cancel_can_opt_into_deleting_the_files(self, client, db_session, monkeypatch):
+        # The page's "Stop and delete" for a stream nobody wants to keep. The
+        # default stays keep-the-bytes; deletion is an explicit flag.
+        from miru.catalog import router as mod
+
+        calls = []
+
+        class Fake:
+            def cancel(self, job_id, delete_files=False):
+                calls.append((job_id, delete_files))
+
+        monkeypatch.setattr(mod, "downloader", lambda: Fake())
+        self._work(db_session, "b" * 40)
+        client.post(f"/api/catalog/downloads/{'b' * 40}/action",
+                    json={"action": "cancel", "delete_files": True})
+        assert calls == [("b" * 40, True)]
+
+    def test_plain_cancel_still_keeps_the_bytes(self, client, db_session, monkeypatch):
+        from miru.catalog import router as mod
+
+        calls = []
+
+        class Fake:
+            def cancel(self, job_id, delete_files=False):
+                calls.append((job_id, delete_files))
+
+        monkeypatch.setattr(mod, "downloader", lambda: Fake())
+        self._work(db_session, "c" * 40)
+        client.post(f"/api/catalog/downloads/{'c' * 40}/action", json={"action": "cancel"})
+        assert calls == [("c" * 40, False)]
+
+    def test_the_poll_says_which_rows_are_ephemeral(self, client, db_session, poll):
+        # The page shows Keep on streams and nothing on downloads; without the
+        # flag it would offer Keep on things already being kept.
+        _, table = poll
+        table["d" * 40] = _status("d" * 40)
+        self._work(db_session, "d" * 40, ephemeral=True)
+        row = client.get("/api/catalog/downloads").json()["downloads"][0]
+        assert row["ephemeral"] is True

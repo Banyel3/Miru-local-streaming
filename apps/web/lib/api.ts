@@ -418,6 +418,8 @@ export type ActiveDownload = {
   title: string;
   job_id: string;
   state: "queued" | "downloading" | "paused" | "done" | "failed" | "cancelled";
+  /** A Watch Now stream: never joins the library, cleaned up unless kept. */
+  ephemeral?: boolean;
   progress: number;
   speed_bps?: number;
   eta_seconds?: number | null;

@@ -6,12 +6,13 @@ import { useEffect, useState } from "react";
 import { ActiveDownload, MediaFile, clock, displayTitle } from "@/lib/api";
 import { pollDownloads } from "@/app/actions";
 import { percentOf, useContinueWatching } from "@/lib/store";
-import { Close, Heart, Home, Library, Menu, Settings } from "@/components/icons";
+import { Close, Down, Heart, Home, Library, Menu, Settings } from "@/components/icons";
 import { ArtTile, ProgressBar } from "@/components/ui";
 
 const NAV = [
   { href: "/", label: "Home", jp: "ホーム", Icon: Home },
   { href: "/library", label: "Library", jp: "ライブラリ", Icon: Library },
+  { href: "/downloads", label: "Downloads", jp: "ダウンロード", Icon: Down },
   { href: "/favourites", label: "Favourites", jp: "おきにいり", Icon: Heart },
 ];
 
