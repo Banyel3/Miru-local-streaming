@@ -349,3 +349,101 @@ class TestProgressIsAFactNotAFeeling:
         src = tmp_path / "empty.mkv"
         src.write_bytes(b"")
         assert remux.progress(1, src) is None
+
+
+class TestTheLiveRemuxIsHandedOverNotRedone:
+    """One film, three remuxes in the cache — measured, ~6 GB for one title.
+
+    The live path keys its remux on the infohash; the library path keys on the
+    MediaFile id. When the mover promoted a finished download, the completed
+    live remux was orphaned in the cache and the first library play remuxed the
+    same film again from scratch, for another seven minutes.
+
+    shutil.move preserves size and mtime, so the live digest is recomputable
+    from the library file's own stat — the handover is a rename.
+    """
+
+    def _live_and_library(self, tmp_path):
+        from miru.streaming.partial import info_hash_key
+
+        lib_file = tmp_path / "film.mkv"
+        lib_file.write_bytes(b"x" * 5000)
+        info_hash = "9d86667f49f42712909c2888d346b37a17c44191"
+        # The digest the live path used: same size/mtime (move preserves both),
+        # the infohash-derived id, the incoming path's name is irrelevant.
+        live = remux.cached_path(info_hash_key(info_hash), lib_file)
+        return info_hash, lib_file, live
+
+    def test_a_completed_live_remux_is_renamed_to_the_library_key(self, tmp_path):
+        info_hash, lib_file, live = self._live_and_library(tmp_path)
+        live.write_bytes(b"remuxed")
+
+        assert remux.adopt(info_hash, file_id=40, library_path=lib_file) is True
+        assert not live.exists()
+        assert remux.cached_path(40, lib_file).read_bytes() == b"remuxed"
+        # And the library path now serves it without starting anything.
+        assert remux.state(40, lib_file) == "ready"
+
+    def test_a_still_running_live_remux_is_left_alone(self, tmp_path):
+        # Renaming the file ffmpeg is writing would corrupt both copies. The
+        # library path falls back to a fresh remux, as today.
+        info_hash, lib_file, live = self._live_and_library(tmp_path)
+        live.with_suffix(".part.mp4").write_bytes(b"half")
+
+        assert remux.adopt(info_hash, file_id=40, library_path=lib_file) is False
+        assert not remux.cached_path(40, lib_file).exists()
+
+    def test_no_live_remux_is_a_quiet_no(self, tmp_path):
+        info_hash, lib_file, _ = self._live_and_library(tmp_path)
+        assert remux.adopt(info_hash, file_id=40, library_path=lib_file) is False
+
+    def test_an_existing_library_remux_is_not_overwritten(self, tmp_path):
+        # If the library already remuxed it (user played before promotion
+        # linked), the older live copy must not clobber the newer one.
+        info_hash, lib_file, live = self._live_and_library(tmp_path)
+        live.write_bytes(b"old live copy")
+        remux.cached_path(40, lib_file).write_bytes(b"library copy")
+
+        assert remux.adopt(info_hash, file_id=40, library_path=lib_file) is False
+        assert remux.cached_path(40, lib_file).read_bytes() == b"library copy"
+
+
+class TestPromotionActuallyAdopts:
+    def test_link_by_filename_reaches_adopt_with_the_right_arguments(
+        self, db_session, monkeypatch, tmp_path
+    ):
+        """The wiring, not the mechanism.
+
+        adopt() sits inside a try/except in the promotion path, so a missing
+        import or a wrong argument fails SILENTLY forever and the double remux
+        quietly returns. This drives the real function end to end — a NameError
+        in there is a test failure here, not a log line nobody reads.
+        """
+        from miru.catalog import router as mod
+        from miru.catalog.models import CatalogWork
+        from miru.library.models import MediaFile
+
+        lib_file = tmp_path / "Film.2026.mkv"
+        lib_file.write_bytes(b"x" * 100)
+        db_session.add(MediaFile(id=91, path=str(lib_file), title="Film"))
+        w = CatalogWork(
+            kind="movie", normalised_title="film", display_title="Film",
+            download_job_id="9d86667f49f42712909c2888d346b37a17c44191",
+        )
+        db_session.add(w)
+        db_session.commit()
+
+        class Fake:
+            def playable_prefix(self, h):
+                return {"file": lib_file.name, "name": lib_file.name}
+
+        monkeypatch.setattr(mod, "downloader", lambda: Fake())
+
+        adopted = []
+        from miru.streaming import remux
+
+        monkeypatch.setattr(
+            remux, "adopt", lambda ih, fid, p: adopted.append((ih, fid, p)) or True
+        )
+        mod._link_by_filename(db_session, w)
+        assert adopted == [(w.download_job_id, 91, lib_file)]

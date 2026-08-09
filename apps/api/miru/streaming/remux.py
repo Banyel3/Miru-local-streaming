@@ -157,6 +157,33 @@ def follow(source: Path, ceiling, alive, chunk: int = 1 << 20, poll: float = 1.0
             yield block
 
 
+def adopt(info_hash: str, file_id: int, library_path: Path) -> bool:
+    """Rename a finished live remux to the library's key. True if it happened.
+
+    The live path keys on the infohash, the library on the MediaFile id — so a
+    film watched while downloading used to be remuxed AGAIN on first library
+    play, and the cache held three copies of one title (~6 GB, measured). The
+    mover preserves size and mtime, so the live digest is recomputable from the
+    library file's own stat, and the handover is one rename.
+
+    Refuses when the live remux is still being written (renaming under ffmpeg
+    corrupts both copies) and never clobbers an existing library remux — if the
+    user played it before promotion linked it, the library copy is newer.
+    """
+    # Imported here rather than at module top: partial.py imports this module.
+    from miru.streaming.partial import info_hash_key
+
+    live = cached_path(info_hash_key(info_hash), library_path)
+    dest = cached_path(file_id, library_path)
+    if live.with_suffix(".part.mp4").exists():
+        return False
+    if not live.exists() or dest.exists():
+        return False
+    live.replace(dest)
+    log.info("adopted live remux for %s as %s", library_path.name, dest.name)
+    return True
+
+
 def progress(file_id: int, source: Path) -> float | None:
     """How far a running remux has got, 0..1, or None when nothing is written.
 

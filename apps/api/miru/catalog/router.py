@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -383,6 +384,17 @@ def _link_by_filename(db: Session, work: CatalogWork) -> None:
         work.library_file_id = row.id
         db.commit()
         log.info("linked %s to library file %s", work.display_title, row.id)
+
+        # The film was likely watched while it downloaded, and that remux is
+        # done. Rename it to the library's key instead of remuxing the same
+        # film again on first library play — the cache held three copies of one
+        # title before this.
+        try:
+            from miru.streaming import remux
+
+            remux.adopt(work.download_job_id, row.id, Path(row.path))
+        except Exception:  # noqa: BLE001 — a failed adopt just means a fresh remux
+            log.exception("could not adopt the live remux for %s", row.id)
 
 
 _scan_lock = threading.Lock()
