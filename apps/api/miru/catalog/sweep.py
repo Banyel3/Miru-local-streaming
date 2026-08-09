@@ -129,7 +129,7 @@ def completion_candidates(db: Session, limit: int = 8) -> list[CatalogWork]:
         db.execute(
             sa_select(CatalogWork)
             .where(
-                CatalogWork.kind == "anime",
+                CatalogWork.kind.in_(("anime", "series")),
                 (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE"),
                 CatalogWork.release_count > 0,
                 CatalogWork.adult.is_(False),

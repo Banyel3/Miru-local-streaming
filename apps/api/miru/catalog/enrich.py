@@ -190,6 +190,19 @@ def _tvmaze(title: str) -> dict | None:
     show = d[0].get("show") or {}
     image = show.get("image") or {}
     premiered = show.get("premiered") or ""
+
+    # The aired-episode list is the denominator the strict wall judges by.
+    # A second request, same throttle — and its failure must not turn a
+    # resolved show into a miss: the identity is worth more than the count.
+    aired = None
+    try:
+        eps = _get(f"{TVMAZE}/shows/{show.get('id')}/episodes")
+        if isinstance(eps, list):
+            aired = len(eps)
+    except Exception:  # noqa: BLE001
+        pass
+
+    ended = (show.get("status") or "").lower() == "ended"
     return {
         "provider": "tvmaze",
         "provider_id": str(show.get("id")),
@@ -203,7 +216,9 @@ def _tvmaze(title: str) -> dict | None:
         "genres": show.get("genres") or [],
         "year": int(premiered[:4]) if premiered[:4].isdigit() else None,
         "format": "TV",
-        "episode_count": None,
+        "episode_count": aired if ended else None,
+        "episodes_aired": aired,
+        "release_status": "FINISHED" if ended else ("RELEASING" if show.get("status") else None),
     }
 
 
@@ -228,6 +243,21 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
         return None
     r = results[0]
 
+    # Series only: the detail record carries the episode count the strict wall
+    # judges by. Movies never pay for the extra request — a film has no
+    # episodes to count.
+    count = None
+    status = None
+    if kind != "movie":
+        try:
+            detail = _get(
+                f"{TMDB}/tv/{r.get('id')}?api_key={settings.tmdb_api_key}"
+            )
+            count = detail.get("number_of_episodes")
+            status = detail.get("status")
+        except Exception:  # noqa: BLE001 — identity outranks the count
+            pass
+
     date = r.get("release_date") or r.get("first_air_date") or ""
     poster = r.get("poster_path")
     backdrop = r.get("backdrop_path")
@@ -250,7 +280,12 @@ def _tmdb(title: str, year: int | None, kind: str) -> dict | None:
         "genres": [],
         "year": int(date[:4]) if date[:4].isdigit() else None,
         "format": "MOVIE" if kind == "movie" else "TV",
-        "episode_count": None,
+        "episode_count": count,
+        "episodes_aired": None,
+        "release_status": (
+            "FINISHED" if (status or "").lower() in ("ended", "canceled")
+            else ("RELEASING" if status else None)
+        ),
     }
 
 

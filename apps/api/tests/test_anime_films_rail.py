@@ -180,12 +180,65 @@ class TestTheAnimeWallShowsOnlyCompleteCards:
         got = db_session.execute(_base("all", rail="latest")).scalars().all()
         assert [x.id for x in got] == [film.id]
 
-    def test_the_live_action_walls_are_untouched(self, db_session):
-        # No wired provider gives live-action episode counts; hiding by a
-        # denominator we do not have would empty the Series wall.
-        s = CatalogWork(kind="series", normalised_title="pb", display_title="Power Book",
-                        release_count=3, best_seeder_pct=1.0)
-        db_session.add(s)
+    def test_the_movies_wall_is_the_one_exemption(self, db_session):
+        # Series joined the strict rule once TVmaze/TMDB supplied a
+        # denominator (TestTheSeriesWallIsStrictNow). Movies are the exemption
+        # that remains: a film with a release is whole.
+        m = CatalogWork(kind="movie", normalised_title="film", display_title="Film",
+                        release_count=1, best_seeder_pct=1.0)
+        db_session.add(m)
         db_session.commit()
+        got = db_session.execute(_base("movie", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [m.id]
+
+
+class TestTheSeriesWallIsStrictNow:
+    """Live-action was exempt only for lack of a denominator; TVmaze's aired
+    list and TMDB's tv detail now supply one, so Kamen-Rider-style fragments
+    leave this wall the same way anime fragments left theirs.
+    """
+
+    def _series(self, db, title, **kw):
+        w = CatalogWork(kind="series", normalised_title=title.casefold(),
+                        display_title=title, release_count=3, best_seeder_pct=9.0, **kw)
+        db.add(w)
+        db.commit()
+        return w
+
+    def test_a_complete_ended_series_shows(self, db_session):
+        w = self._series(db_session, "Done", episode_count=26, episodes_covered=26,
+                         release_status="FINISHED")
         got = db_session.execute(_base("series", rail="latest")).scalars().all()
-        assert [x.id for x in got] == [s.id]
+        assert [x.id for x in got] == [w.id]
+
+    def test_a_fragment_hides(self, db_session):
+        self._series(db_session, "Scattered", episode_count=45, episodes_covered=3,
+                     release_status="FINISHED")
+        assert db_session.execute(_base("series", rail="latest")).scalars().all() == []
+
+    def test_an_unknown_count_series_hides_too(self, db_session):
+        self._series(db_session, "Uncounted")
+        assert db_session.execute(_base("series", rail="latest")).scalars().all() == []
+
+    def test_series_rows_in_the_all_wall_obey_the_rule(self, db_session):
+        self._series(db_session, "Scattered", episode_count=45, episodes_covered=3,
+                     release_status="FINISHED")
+        film = _w(db_session, "Monay", "MOVIE", kind="movie")
+        got = db_session.execute(_base("all", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [film.id]
+
+    def test_movies_remain_exempt(self, db_session):
+        m = CatalogWork(kind="movie", normalised_title="film", display_title="Film",
+                        release_count=1, best_seeder_pct=1.0)
+        db_session.add(m)
+        db_session.commit()
+        got = db_session.execute(_base("movie", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [m.id]
+
+    def test_the_completion_sweep_now_hunts_series_as_well(self, db_session):
+        from miru.catalog.sweep import completion_candidates
+
+        self._series(db_session, "Scattered", episode_count=45, episodes_covered=3,
+                     release_status="FINISHED")
+        got = completion_candidates(db_session, limit=8)
+        assert [w.display_title for w in got] == ["Scattered"]

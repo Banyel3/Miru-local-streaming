@@ -287,10 +287,12 @@ class TestHiddenFragmentsStillGetTheirSweep:
             self._mk(db_session, f"F{i}", covered=1, count=24, status="FINISHED")
         assert len(sweep_mod.completion_candidates(db_session, limit=8)) == 8
 
-    def test_films_and_live_action_are_not_its_business(self, db_session):
+    def test_films_are_not_its_business_but_series_are_now(self, db_session):
+        # Series joined the strict wall, so their fragments need the sweep too.
         self._mk(db_session, "A Film", kind="movie")
-        self._mk(db_session, "Live Action", kind="series")
-        assert sweep_mod.completion_candidates(db_session, limit=8) == []
+        live = self._mk(db_session, "Live Action", kind="series")
+        got = sweep_mod.completion_candidates(db_session, limit=8)
+        assert [w.id for w in got] == [live.id]
 
     def test_a_work_with_no_releases_is_skipped(self, db_session):
         # Nothing to complete; its releases moved elsewhere and _restate will

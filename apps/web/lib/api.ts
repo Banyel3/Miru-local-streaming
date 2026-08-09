@@ -513,5 +513,12 @@ export type SearchResult = {
   info_hash: string | null;
 };
 
-export const searchIndexers = (q: string) =>
-  get<SearchResult[]>(`/api/acquisition/search?q=${encodeURIComponent(q)}`);
+export type SearchFilters = { kind?: string; quality?: string; max_size_gb?: string };
+
+export const searchIndexers = (q: string, f: SearchFilters = {}) => {
+  const p = new URLSearchParams({ q });
+  if (f.kind) p.set("kind", f.kind);
+  if (f.quality) p.set("quality", f.quality);
+  if (f.max_size_gb) p.set("max_size_gb", f.max_size_gb);
+  return get<SearchResult[]>(`/api/acquisition/search?${p}`);
+};

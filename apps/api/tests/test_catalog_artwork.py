@@ -291,3 +291,109 @@ class TestAniListSaysTheShapeOfTheRun:
             lambda *a, **k: self._media(status="RELEASING", episodes=None),
         )
         assert enrich._anilist("Show")["episodes_aired"] is None
+
+
+class TestADeadDiskDegradesInsteadOf500ing:
+    """The storage USB drive dropped and re-enumerated; the stale mount
+    answered EIO to everything. Every poster on the site turned into a 500 —
+    "images are all broken" — when a 404 would have left the tint tiles up and
+    the site usable. A cache being unavailable is a miss, not a server error.
+    """
+
+    def test_a_cache_dir_that_cannot_be_made_is_a_miss_not_a_crash(
+        self, client, db_session, monkeypatch
+    ):
+        from miru.catalog import posters as mod
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="p", display_title="P",
+                        poster_url="https://image.tmdb.org/t/p/w500/x.jpg")
+        db_session.add(w)
+        db_session.commit()
+
+        def dead():
+            raise OSError(5, "Input/output error")
+
+        monkeypatch.setattr(mod, "_cache_dir", dead)
+        assert client.get(f"/api/posters/{w.id}").status_code == 404
+
+    def test_health_reports_whether_storage_answers(self, client, monkeypatch):
+        import miru.main as main_mod
+
+        monkeypatch.setattr(main_mod, "_storage_ok", lambda: False)
+        assert client.get("/api/health").json()["storage_ok"] is False
+
+
+class TestLiveActionGetsARealDenominator:
+    """The strict wall exempted live-action series only because no wired
+    provider gave their episode counts. TVmaze's aired-episode list and TMDB's
+    tv detail both do — one extra request each, behind the same throttle — so
+    the exemption ends and Kamen-Rider-style fragments leave the wall too.
+    """
+
+    def test_tvmaze_counts_the_aired_list(self, monkeypatch):
+        calls = []
+
+        def fake_get(url, *a, **k):
+            calls.append(url)
+            if "/search/shows" in url:
+                return [{"show": {"id": 7, "name": "Show", "status": "Ended",
+                                  "premiered": "2020-01-01"}}]
+            assert url.endswith("/shows/7/episodes")
+            return [{"id": i} for i in range(26)]
+
+        monkeypatch.setattr(enrich, "_get", fake_get)
+        got = enrich._tvmaze("Show")
+        assert got["episode_count"] == 26
+        assert got["episodes_aired"] == 26
+        assert got["release_status"] == "FINISHED"
+
+    def test_a_running_show_maps_to_releasing(self, monkeypatch):
+        def fake_get(url, *a, **k):
+            if "/search/shows" in url:
+                return [{"show": {"id": 7, "name": "Show", "status": "Running"}}]
+            return [{"id": i} for i in range(6)]
+
+        monkeypatch.setattr(enrich, "_get", fake_get)
+        got = enrich._tvmaze("Show")
+        assert got["release_status"] == "RELEASING"
+        assert got["episodes_aired"] == 6
+
+    def test_a_failed_episode_list_does_not_lose_the_show(self, monkeypatch):
+        # The identity is worth more than the count; a second request failing
+        # must not turn a resolved show into a miss.
+        def fake_get(url, *a, **k):
+            if "/search/shows" in url:
+                return [{"show": {"id": 7, "name": "Show", "status": "Ended"}}]
+            raise OSError("episodes endpoint down")
+
+        monkeypatch.setattr(enrich, "_get", fake_get)
+        got = enrich._tvmaze("Show")
+        assert got["provider_id"] == "7"
+        assert got["episodes_aired"] is None
+
+    def test_tmdb_series_detail_supplies_the_count(self, monkeypatch):
+        monkeypatch.setattr(enrich.settings, "tmdb_api_key", "k")
+
+        def fake_get(url, *a, **k):
+            if "/search/tv" in url:
+                return {"results": [{"id": 9, "name": "Show", "first_air_date": "2020-01-01"}]}
+            assert "/tv/9" in url
+            return {"number_of_episodes": 40, "status": "Ended"}
+
+        monkeypatch.setattr(enrich, "_get", fake_get)
+        got = enrich._tmdb("Show", None, "series")
+        assert got["episode_count"] == 40
+        assert got["release_status"] == "FINISHED"
+
+    def test_tmdb_movies_never_pay_for_a_detail_call(self, monkeypatch):
+        monkeypatch.setattr(enrich.settings, "tmdb_api_key", "k")
+        calls = []
+
+        def fake_get(url, *a, **k):
+            calls.append(url)
+            return {"results": [{"id": 9, "title": "Film", "release_date": "2020-01-01"}]}
+
+        monkeypatch.setattr(enrich, "_get", fake_get)
+        enrich._tmdb("Film", None, "movie")
+        assert len(calls) == 1

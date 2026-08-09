@@ -110,10 +110,14 @@ _DENOM = case(
     (CatalogWork.release_status == "RELEASING", CatalogWork.episodes_aired),
     else_=CatalogWork.episode_count,
 )
-_ANIME_COMPLETE = or_(
+# Series joined anime under the same rule once TVmaze's aired list and TMDB's
+# tv detail supplied their denominator — the exemption existed only for the
+# lack of one. Movies stay exempt everywhere: a film with a release is whole.
+_RUN_COMPLETE = or_(
     _IS_FILM,
     and_(_DENOM.isnot(None), _DENOM > 0, CatalogWork.episodes_covered >= _DENOM),
 )
+_ANIME_COMPLETE = _RUN_COMPLETE  # anime alias kept where the wall code reads it
 
 
 def _base(kind: str | None, rail: str | None = None) -> Select:
@@ -133,13 +137,14 @@ def _base(kind: str | None, rail: str | None = None) -> Select:
     if kind == "anime-series":
         return q.where(CatalogWork.kind == "anime", _IS_NOT_FILM, _ANIME_COMPLETE)
     if kind == "all":
-        # Anime rows obey the strict rule wherever they appear.
-        return q.where(or_(CatalogWork.kind != "anime", _ANIME_COMPLETE))
+        # Anime AND series rows obey the strict rule wherever they appear;
+        # movies are whole by nature.
+        return q.where(or_(CatalogWork.kind == "movie", _RUN_COMPLETE))
 
     if kind and kind != "all":
         q = q.where(CatalogWork.kind == kind)
-        if kind == "anime":
-            q = q.where(_ANIME_COMPLETE)
+        if kind in ("anime", "series"):
+            q = q.where(_RUN_COMPLETE)
 
     # Only the mixed anime wall splits on format per rail: a live-action film
     # already has its own kind, and filtering the Movies wall by MOVIE would

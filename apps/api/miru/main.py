@@ -62,6 +62,26 @@ app.include_router(live_router)
 app.include_router(subtitles_router)
 
 
+def _storage_ok() -> bool:
+    """Whether the media disk answers at all.
+
+    A USB disk that drops re-enumerates under a new device node and the stale
+    mount answers EIO to everything — the site half-breaks with nothing naming
+    the cause. Cheap check, surfaced here so the UI can say the true thing.
+    """
+    import os
+
+    try:
+        return all(os.access(str(p), os.R_OK) and os.listdir(str(p)) is not None
+                   for p in settings.libraries)
+    except OSError:
+        return False
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "libraries": [str(p) for p in settings.libraries]}
+    return {
+        "ok": True,
+        "libraries": [str(p) for p in settings.libraries],
+        "storage_ok": _storage_ok(),
+    }

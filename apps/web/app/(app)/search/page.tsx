@@ -1,3 +1,4 @@
+import { SearchFilterRow } from "@/components/SearchFilterRow";
 import { SearchResults } from "@/components/SearchResults";
 import { WallSearch } from "@/components/WallSearch";
 import { EmptyState } from "@/components/ui";
@@ -14,16 +15,16 @@ import { SearchResult, searchIndexers } from "@/lib/api";
 export default async function SearchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; kind?: string; quality?: string; max_size_gb?: string }>;
 }) {
-  const { q } = await searchParams;
+  const { q, kind, quality, max_size_gb } = await searchParams;
 
   let results: SearchResult[] | null = null;
   let error: string | null = null;
 
   if (q && q.trim().length >= 2) {
     try {
-      results = await searchIndexers(q.trim());
+      results = await searchIndexers(q.trim(), { kind, quality, max_size_gb });
     } catch (e) {
       // Never an empty list: "the indexers are down" and "no matches" look
       // identical to a person, and the search stack this replaced failed
@@ -38,6 +39,7 @@ export default async function SearchPage({
   return (
     <div className="flex flex-col gap-7">
       <WallSearch initial={q ?? ""} autoFocus />
+      {q && <SearchFilterRow kind={kind} quality={quality} maxSizeGb={max_size_gb} />}
 
       {!q ? (
         <EmptyState title="Search every indexer at once">

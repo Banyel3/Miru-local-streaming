@@ -99,9 +99,17 @@ def poster(work_id: int, db: Session = Depends(get_db)):
         log.warning("refusing to fetch poster from %s", urllib.parse.urlparse(url).hostname)
         raise HTTPException(404, "no poster")
 
-    path = _cache_path(url)
-    if not path.exists() and not _fetch(url, path):
-        raise HTTPException(404, "no poster")
+    try:
+        path = _cache_path(url)
+        if not path.exists() and not _fetch(url, path):
+            raise HTTPException(404, "no poster")
+    except OSError as exc:
+        # The cache lives on the storage disk, and that disk can drop off USB
+        # — it did, and every poster on the site became a 500. A cache being
+        # unavailable is a miss, not a server error: 404 leaves the tint tiles
+        # up and the site usable while the mount is dead.
+        log.warning("poster cache unavailable (%s); serving misses", exc)
+        raise HTTPException(404, "no poster") from exc
 
     media = {
         ".png": "image/png",

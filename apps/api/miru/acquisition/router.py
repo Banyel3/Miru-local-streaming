@@ -9,7 +9,9 @@ from miru.acquisition.prowlarr import provider
 from miru.acquisition.provider import AcquisitionError
 from miru.acquisition.provider import DownloadStatus, SearchResult
 from miru.catalog.classify import classify
+from miru.catalog.enrich import _loose
 from miru.catalog.ingest import ingest_search
+from miru.catalog.parse import parse
 from miru.core.db import get_db
 
 log = logging.getLogger(__name__)
@@ -23,10 +25,41 @@ class Grab(BaseModel):
     watch: bool = False
 
 
+def _relevance(q: str):
+    """Rank a result by how much its TITLE is the thing that was asked for.
+
+    `Barcelona` is a Filipino film, and searching it returned every high-seeded
+    release whose name merely contains the word — seeders were the only sort
+    key, so the film literally named by the query drowned under torrents about
+    a football club. Tiers: exact parsed title, prefix, whole word, the rest;
+    seeders still decide within a tier. Loose comparison, because scene naming
+    drops the punctuation providers keep.
+    """
+    want = _loose(q)
+
+    def key(r):
+        kind = classify(r.category_ids or []) or "movie"
+        title = _loose(parse(r.title, kind).title or "")
+        if title == want:
+            tier = 0
+        elif title.startswith(want):
+            tier = 1
+        elif want in title:
+            tier = 2
+        else:
+            tier = 3
+        return (tier, -r.seeders)
+
+    return key
+
+
 @router.get("/search", response_model=list[SearchResult])
 def search(
     q: str = Query(..., min_length=2),
     limit: int = Query(50, le=200),
+    kind: str | None = Query(None),
+    quality: str | None = Query(None),
+    max_size_gb: float | None = Query(None, gt=0),
     db: Session = Depends(get_db),
 ):
     """Search every configured indexer, and keep what comes back.
@@ -65,11 +98,28 @@ def search(
         )
 
     try:
+        # The UNfiltered list, on purpose: a filter is a view, not a verdict,
+        # and the catalogue keeps learning from everything the query surfaced.
         ingest_search(db, playable)
     except Exception:  # noqa: BLE001 — a failed write must not fail the search
         log.exception("could not ingest results for %r", q)
         db.rollback()
-    return playable
+
+    shown = playable
+    if kind:
+        shown = [r for r in shown if classify(r.category_ids or []) == kind]
+    if quality:
+        want_q = quality.lower()
+        shown = [
+            r for r in shown
+            if (parse(r.title, classify(r.category_ids or []) or "movie").quality or "")
+            .lower() == want_q
+        ]
+    if max_size_gb:
+        cap = int(max_size_gb * (1 << 30))
+        shown = [r for r in shown if (r.size_bytes or 0) <= cap]
+
+    return sorted(shown, key=_relevance(q))
 
 
 @router.post("/download", response_model=dict)

@@ -49,7 +49,7 @@ def filled(db_session):
     # complete so the mechanics stay observable.
     from miru.catalog.models import CatalogWork
 
-    for w in db_session.query(CatalogWork).filter(CatalogWork.kind == "anime"):
+    for w in db_session.query(CatalogWork).filter(CatalogWork.kind.in_(("anime", "series"))):
         w.episode_count = 1
         w.episodes_covered = 1
         w.release_status = "FINISHED"
@@ -64,7 +64,7 @@ def _make_visible(db):
     the picker, so their work is marked complete to stay on the wall."""
     from miru.catalog.models import CatalogWork
 
-    for w in db.query(CatalogWork).filter(CatalogWork.kind == "anime"):
+    for w in db.query(CatalogWork).filter(CatalogWork.kind.in_(("anime", "series"))):
         w.episode_count = 1
         w.episodes_covered = 1
         w.release_status = "FINISHED"
@@ -399,12 +399,12 @@ class TestTheCardSaysWhatItHolds:
         # False would render "incomplete" on a show nobody has counted.
         from miru.catalog.models import CatalogWork
 
-        w = CatalogWork(kind="series", normalised_title="u", display_title="U",
-                        release_count=1, best_seeder_pct=1.0)
+        w = CatalogWork(kind="movie", normalised_title="u", display_title="U",
+                        format="MOVIE", release_count=1, best_seeder_pct=1.0)
         db_session.add(w)
         db_session.commit()
         item = next(
-            x for r in client.get("/api/catalog?kind=series").json()["rails"]
+            x for r in client.get("/api/catalog?kind=movie").json()["rails"]
             for x in r["items"] if x["id"] == w.id
         )
         assert item["complete"] is None
