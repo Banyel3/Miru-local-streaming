@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -20,6 +21,13 @@ router = APIRouter(prefix="/api/acquisition", tags=["acquisition"])
 
 class Grab(BaseModel):
     result_id: str
+    # The infohash the search result carried, if it did. YTS hands out .torrent
+    # URLs rather than magnets, and the submit guard refuses those (the job id
+    # must be an infohash) — so nearly every movie Watch Now from search failed
+    # with "that indexer only offers a .torrent file". A magnet is
+    # constructible from the hash, and the catalogue path always did; now the
+    # search path does too.
+    info_hash: str | None = None
     # Whether the user wants to watch it rather than shelve it. Decides piece
     # order, and nothing else.
     watch: bool = False
@@ -129,12 +137,23 @@ def download(grab: Grab):
     Goes through the configured downloader rather than Prowlarr's own, so a
     result found by searching behaves the same as one found on the wall.
     """
+    target = grab.result_id
+    if not target.startswith("magnet:") and grab.info_hash:
+        # Same construction as CatalogRelease.magnet_uri: hash + open trackers,
+        # because a magnet with no source never finds the swarm.
+        from miru.catalog.models import OPEN_TRACKERS
+
+        trackers = "".join(
+            f"&tr={urllib.parse.quote(t, safe='')}" for t in OPEN_TRACKERS
+        )
+        target = f"magnet:?xt=urn:btih:{grab.info_hash}{trackers}"
+
     dl = downloader()
     try:
         if supports_streaming():
-            job = dl.submit(grab.result_id, sequential=grab.watch)
+            job = dl.submit(target, sequential=grab.watch)
         else:
-            job = dl.submit(grab.result_id)
+            job = dl.submit(target)
     except AcquisitionError as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"job_id": job.id, "streaming": supports_streaming()}

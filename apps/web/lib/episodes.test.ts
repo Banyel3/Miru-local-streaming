@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { groupReleases, ownedFileFor, threeChoices } from "./episodes";
+import { groupReleases, ownedFileFor, threeChoices, visibleBatches } from "./episodes";
 import type { CatalogRelease } from "./api";
 
 /**
@@ -145,4 +145,64 @@ test("a batch only matches the batch that was actually downloaded", () => {
 test("unsorted rows are never marked owned", () => {
   const g = { key: "unsorted", kind: "unsorted" as const, from: -1, releases: [rel({})] };
   assert.equal(ownedFileFor(g, [{ episode: 5, episode_end: null, file_id: 77 }]), null);
+});
+
+// ── batch ordering ───────────────────────────────────────────────────────────
+// Naruto Shippuuden's sheet showed 15+ overlapping batch rows sorted by newest
+// start — "110-143" on top, the whole-run "1-500" buried mid-list. A batch list
+// is a menu of scopes; the widest scope is the answer most openers came for.
+
+test("the widest batch comes first, not the newest-starting one", () => {
+  const groups = groupReleases([
+    rel({ episode: 110, episode_end: 143 }),
+    rel({ episode: 1, episode_end: 500 }),
+    rel({ episode: 80, episode_end: 426 }),
+  ]);
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    ["batch:1-500", "batch:80-426", "batch:110-143"],
+  );
+});
+
+test("equal spans fall back to earliest start", () => {
+  const groups = groupReleases([
+    rel({ episode: 51, episode_end: 100 }),
+    rel({ episode: 1, episode_end: 50 }),
+  ]);
+  assert.deepEqual(groups.map((g) => g.key), ["batch:1-50", "batch:51-100"]);
+});
+
+test("singles keep their newest-first order", () => {
+  const groups = groupReleases([
+    rel({ episode: 5 }),
+    rel({ episode: 9 }),
+  ]);
+  assert.deepEqual(groups.map((g) => g.key), ["single:9", "single:5"]);
+});
+
+// ── the visible slice ────────────────────────────────────────────────────────
+
+test("a long batch list is cut and counted, never silently truncated", () => {
+  const groups = groupReleases(
+    Array.from({ length: 12 }, (_, i) => rel({ episode: i * 10 + 1, episode_end: i * 10 + 5 })),
+  );
+  const batches = groups.filter((g) => g.kind === "batch");
+  const cut = visibleBatches(batches, false);
+  assert.equal(cut.shown.length, 6);
+  assert.equal(cut.hidden, 6);
+});
+
+test("expanded shows everything", () => {
+  const groups = groupReleases(
+    Array.from({ length: 12 }, (_, i) => rel({ episode: i * 10 + 1, episode_end: i * 10 + 5 })),
+  );
+  const batches = groups.filter((g) => g.kind === "batch");
+  assert.equal(visibleBatches(batches, true).shown.length, 12);
+  assert.equal(visibleBatches(batches, true).hidden, 0);
+});
+
+test("a short list is never cut", () => {
+  const groups = groupReleases([rel({ episode: 1, episode_end: 5 })]);
+  const batches = groups.filter((g) => g.kind === "batch");
+  assert.equal(visibleBatches(batches, false).hidden, 0);
 });

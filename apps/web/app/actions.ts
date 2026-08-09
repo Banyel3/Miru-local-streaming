@@ -162,12 +162,16 @@ export async function makeWatchable(infoHash: string): Promise<{ ok: true } | { 
 export async function startDownloadDirect(
   resultId: string,
   watch: boolean,
+  infoHash?: string | null,
 ): Promise<{ jobId: string } | { error: string }> {
   try {
     const res = await fetch(`${API_INTERNAL}/api/acquisition/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result_id: resultId, watch }),
+      // info_hash lets the API build a magnet when the indexer (YTS) only
+      // offers a .torrent URL — without it nearly every movie grab from
+      // search was refused.
+      body: JSON.stringify({ result_id: resultId, watch, info_hash: infoHash ?? null }),
       cache: "no-store",
     });
     const body = await res.json().catch(() => null);

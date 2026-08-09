@@ -59,11 +59,38 @@ export function groupReleases(releases: CatalogRelease[]): Group[] {
 
   // Batches first — a batch covers episodes that also appear below it, and
   // burying it under the singles it contains is how you download the same six
-  // episodes twice. Newest episode first within each group.
+  // episodes twice. Within batches, the WIDEST span first: a batch list is a
+  // menu of scopes, and sorting by newest start put "110-143" on top while
+  // the whole-run "1-500" sat buried mid-list of fifteen overlapping rows.
+  // Singles stay newest-first — that is what a weekly watcher opens for.
   const RANK = { batch: 0, single: 1, unsorted: 2 };
+  const span = (g: Group) => {
+    const r = g.releases[0];
+    return r.episode != null && r.episode_end != null ? r.episode_end - r.episode : 0;
+  };
   return [...by.values()]
     .filter((g) => g.releases.some(grabbable))
-    .sort((a, b) => RANK[a.kind] - RANK[b.kind] || b.from - a.from);
+    .sort(
+      (a, b) =>
+        RANK[a.kind] - RANK[b.kind] ||
+        (a.kind === "batch" ? span(b) - span(a) || a.from - b.from : b.from - a.from),
+    );
+}
+
+/**
+ * The batch rows worth showing before "show all".
+ *
+ * Fifteen overlapping spans is noise, but hiding any of them silently would
+ * hide a scope somebody wants (the small batch may be the only healthy one).
+ * Cut at six, say how many are behind the fold, let the user unfold.
+ */
+export function visibleBatches(
+  batches: Group[],
+  expanded: boolean,
+): { shown: Group[]; hidden: number } {
+  const LIMIT = 6;
+  if (expanded || batches.length <= LIMIT) return { shown: batches, hidden: 0 };
+  return { shown: batches.slice(0, LIMIT), hidden: batches.length - LIMIT };
 }
 
 // Mirrors rank.QUALITY_PREFERENCE and rank._DESC.

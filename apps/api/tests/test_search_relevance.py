@@ -118,3 +118,63 @@ class TestFiltersNarrowThePile:
         ]
         _titles(client, "Barcelona", "&kind=movie")
         assert len(seen) == 2
+
+
+class TestAGrabFromSearchBuildsAMagnetWhenItCan:
+    """"That indexer only offers a .torrent file" — on almost every movie.
+
+    YTS hands out .torrent URLs, not magnets, and the guard that refuses a
+    .torrent at submit (the job id must be an infohash) fired on nearly every
+    movie Watch Now from search. But the search result CARRIES the infohash —
+    the catalogue path has always built a magnet from it, and the search path
+    just never did.
+    """
+
+    @pytest.fixture
+    def grabbing(self, monkeypatch):
+        import miru.acquisition.router as mod
+
+        submitted = []
+
+        class Fake:
+            def submit(self, magnet, sequential=False):
+                submitted.append(magnet)
+
+                class J:
+                    id = "x" * 40
+                return J()
+
+        monkeypatch.setattr(mod, "downloader", lambda: Fake())
+        monkeypatch.setattr(mod, "supports_streaming", lambda: True)
+        return submitted
+
+    def test_a_torrent_url_with_an_infohash_becomes_a_magnet(self, client, grabbing):
+        res = client.post("/api/acquisition/download", json={
+            "result_id": "https://yts.mx/torrent/download/ABC.torrent",
+            "info_hash": "9d86667f49f42712909c2888d346b37a17c44191",
+            "watch": True,
+        })
+        assert res.status_code == 200, res.text
+        assert grabbing[0].startswith("magnet:?xt=urn:btih:9d86667f49f4")
+        # Trackers, or a magnet with no source never finds the swarm.
+        assert "&tr=" in grabbing[0]
+
+    def test_a_real_magnet_is_passed_through_untouched(self, client, grabbing):
+        m = "magnet:?xt=urn:btih:" + "a" * 40 + "&dn=Show"
+        client.post("/api/acquisition/download", json={"result_id": m, "watch": False})
+        assert grabbing == [m]
+
+    def test_no_magnet_and_no_infohash_is_still_the_honest_error(self, client, monkeypatch):
+        import miru.acquisition.router as mod
+        from miru.acquisition.provider import AcquisitionError
+
+        class Fake:
+            def submit(self, magnet, sequential=False):
+                raise AcquisitionError("That indexer only offers a .torrent file")
+
+        monkeypatch.setattr(mod, "downloader", lambda: Fake())
+        monkeypatch.setattr(mod, "supports_streaming", lambda: True)
+        res = client.post("/api/acquisition/download", json={
+            "result_id": "https://prowlarr.local/dl/abc.torrent",
+        })
+        assert res.status_code == 502

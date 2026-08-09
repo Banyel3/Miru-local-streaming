@@ -10,7 +10,7 @@ import {
   playbackNote,
   releaseSpec,
 } from "@/lib/api";
-import { Group, SECTION, grabbable, groupReleases, ownedFileFor, threeChoices } from "@/lib/episodes";
+import { Group, SECTION, grabbable, groupReleases, ownedFileFor, threeChoices, visibleBatches } from "@/lib/episodes";
 import { Button, EmptyState, MicroChip } from "@/components/ui";
 import { ChevronLeft, Close } from "@/components/icons";
 import { useRouter } from "next/navigation";
@@ -135,6 +135,7 @@ export function ReleaseSheet({
   /** The episode being looked at, or null at the episode list. One sheet, two
    *  levels, no route change — the wall behind it keeps its scroll position. */
   const [scope, setScope] = useState<Group | null>(null);
+  const [allBatches, setAllBatches] = useState(false);
   const body = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -257,19 +258,17 @@ export function ReleaseSheet({
   const current = releases.find((r) => r.info_hash === chosen);
   const offline = detail && !detail.pc_reachable;
 
-  // "8 of 1,172" is the honest line. The other 1,164 have no release behind
-  // them, so they are counted here and never rendered as rows.
+  // "38 of 39" is the honest line, and it is the SERVER'S union — a batch
+  // counts as the span it covers, overlaps count once. The old line counted
+  // group rows, so a card holding an 11-release 1-28 pack read "3 of 28
+  // episodes" while visibly offering all twenty-eight.
   const listed = groups.filter((g) => g.kind !== "unsorted").length;
-  // The provider count belongs to whichever entry the title resolved to, and a
-  // later season's releases keep counting from where the previous one stopped —
-  // Bookworm S4 is episodes 15 and 17 against an S1 entry of 14. Printing
-  // "2 of 14" there states a total the rows visibly exceed, so the count is
-  // only shown once it actually covers the highest episode on screen.
-  const highest = Math.max(...groups.map((g) => g.from), 0);
-  const total = work.episode_count;
-  const episodeCount =
-    total && total > listed && total >= highest
-      ? `${listed} of ${total.toLocaleString()} episodes`
+  const covered = detail?.episodes_covered ?? work.episodes_covered ?? 0;
+  const expected = detail?.episodes_expected ?? work.episodes_expected;
+  const episodeCount = expected
+    ? `${Math.min(covered, expected)} of ${expected.toLocaleString()} episodes`
+    : covered > 0
+      ? `${covered} episode${covered === 1 ? "" : "s"}`
       : `${listed} episode${listed === 1 ? "" : "s"}`;
 
   return (
@@ -355,8 +354,16 @@ export function ReleaseSheet({
 
         {atEpisodes &&
           (["batch", "single", "unsorted"] as const).map((kind) => {
-            const rows = groups.filter((g) => g.kind === kind);
+            let rows = groups.filter((g) => g.kind === kind);
             if (!rows.length) return null;
+            let hidden = 0;
+            if (kind === "batch") {
+              // Fifteen overlapping spans is noise; hiding any silently would
+              // hide the one scope somebody wants. Cut, count, unfold.
+              const cut = visibleBatches(rows, allBatches);
+              rows = cut.shown;
+              hidden = cut.hidden;
+            }
             return (
               <section key={kind} className="flex flex-col gap-2">
                 <h3 className="text-[10px] tracking-[0.07em] text-text-muted uppercase">
@@ -372,6 +379,15 @@ export function ReleaseSheet({
                     />
                   ))}
                 </ul>
+                {hidden > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAllBatches(true)}
+                    className="min-h-11 rounded-2xl border border-border text-[12.5px] font-bold text-text-dim transition-colors hover:border-border-hover hover:text-text"
+                  >
+                    Show {hidden} more batch{hidden === 1 ? "" : "es"}
+                  </button>
+                )}
               </section>
             );
           })}

@@ -28,7 +28,7 @@ export function SearchResults({ query, results }: { query: string; results: Sear
   async function grab(r: SearchResult, watch: boolean) {
     setBusy(r.id);
     setError(null);
-    const res = await startDownloadDirect(r.id, watch);
+    const res = await startDownloadDirect(r.id, watch, r.info_hash);
     setBusy(null);
     if ("error" in res) return setError(res.error);
     setDone((prev) => new Set(prev).add(r.id));
