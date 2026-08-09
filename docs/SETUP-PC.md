@@ -527,3 +527,46 @@ side, and note that **reboot survival is still an open problem on both machines*
 The release picker already labels which is which before you commit to the
 download, so this is visible at the point of choosing rather than discovered
 afterwards.
+
+
+## WSL networking: NAT + port proxies (settled 2026-08-09, after a morning of debugging)
+
+**Do not enable `networkingMode=mirrored` in `.wslconfig`.** Mirrored mode has
+a kernel-level defect that cost a full morning: userspace sockets work (curl,
+python) but kernel-originated connections do not — and an NFS `mount(2)` is
+exactly that, so every mount attempt timed out while every probe succeeded.
+The evidence trail: `nc` to 2049 fine, a raw RPC NULL call answered in both
+directions, and `mount -vvv` timing out with `clientaddr=192.168.1.x` (a LAN
+address inside WSL is the mirrored-mode fingerprint).
+
+NAT mode fixes NFS and breaks inbound instead — the laptop reaches qBittorrent
+(8080), the worker (8010) and Prowlarr (9696) via the PC's tailscale IP, which
+terminates on Windows, so those ports must be proxied into WSL:
+
+- `deploy/pc-update-portproxy.ps1` (run as Administrator) points the proxies at
+  the current WSL IP. **The WSL IP changes on every `wsl --shutdown`**, so run
+  it after each restart — or register it as a boot task.
+- Two Windows quirks it handles: portproxy rules added while IP Helper is
+  running may never bind (config present, netstat shows no listener — only
+  `Restart-Service iphlpsvc` materialises them), and the firewall needs an
+  inbound allow for 8010,8080,9696 (`New-NetFirewallRule`, one-time).
+
+The NFS mount itself, inside WSL (LAN IP, and v4.2 explicitly — the laptop's
+firewall only opens 2049, and a version negotiation that falls back to v3
+needs rpcbind/mountd, which are blocked):
+
+```bash
+sudo mount -t nfs -o vers=4.2 192.168.1.100:/mnt/storage/incoming /mnt/incoming
+```
+
+fstab line (replaces any old `100.71.150.101:/mnt/storage` entries):
+
+```
+192.168.1.100:/mnt/storage/incoming /mnt/incoming nfs vers=4.2,defaults,_netdev,soft,timeo=50 0 0
+```
+
+Laptop-side prerequisites, already applied and worth knowing about: ufw allows
+2049/tcp from the PC's tailscale IP and from 192.168.1.0/24; /etc/exports
+carries both; and **after the storage disk drops and remounts, restart
+`nfs-kernel-server`** — its kernel threads keep serving the dead filesystem
+(listener accepts, nothing answers) until restarted.
