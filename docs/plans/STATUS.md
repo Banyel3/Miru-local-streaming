@@ -96,6 +96,24 @@ a sleeping PC defers the sweep). Keep is the one button that changes the
 outcome, and the remux handover makes a kept film playable without a second
 remux. `cancel()` still defaults to keeping bytes; only the janitor deletes.
 
+## Settled: the strict wall covers series too, and search ranks by title
+
+2026-08-09. Series were exempt from the complete-only wall only because no
+wired provider gave their episode counts; TVmaze's aired-episode list and
+TMDB's tv detail now do (one extra request each, same 28/min throttle, a failed
+count never demotes a resolved identity to a miss). Series obey the same rule
+as anime; movies remain the one exemption — a film with a release is whole.
+Jikan/MAL was checked live and rejected: same totals as AniList, no
+aired-so-far, and a second fuzzy title-match. Search ranks by parsed-title
+relevance (exact/prefix/word/rest, seeders within a tier) with server-side
+kind/quality/size filters; ingest still sees the unfiltered list.
+
+Ops note, measured: AniList's enforced rate limit is 30/min, not its documented
+90; the shared throttle is paced at 28/min. And the storage USB disk dropped
+mid-session (re-enumerated sda→sdb): fstab was already UUID-based so a remount
+heals it, posters degrade to 404 instead of 500ing while the disk is dead, and
+/api/health reports storage_ok.
+
 ## Known open bugs, unrelated to any plan
 
 - qBittorrent's password is still the placeholder. `deploy/
