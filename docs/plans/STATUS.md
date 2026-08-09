@@ -33,13 +33,7 @@ skipped, per CLAUDE.md.
 
 Neither is breakage; both are improvements with a measurement behind them.
 
-- **Per-category refresh passes** (`player-and-coverage` §6). One empty query
-  returns ~366 rows across four indexers. Running the pass once per category
-  multiplies coverage for the same wall-clock, because indexers return a front
-  page *per category*. The measurement that motivates it — a ten-hour window
-  that cannot be paged — is in that plan's §2.
-- **The episode list inside the download sheet** (`file-page` §5). The component
-  exists and is used on `/file/{id}`; the sheet still shows releases only.
+(none — both former entries here shipped on 2026-08-08, see below.)
 
 ## Settled: how adult content is kept off the wall
 
@@ -88,14 +82,30 @@ Both shipped. See [HANDOFF.md](../HANDOFF.md) for what is still open and why.
   the title; and "complete" alone picked `Episodes 838-875`, a chunk out of the
   middle, because uploaders tag any multi-episode release a batch.
 
+## Settled: Watch Now streams; only Keep fills the library
+
+Decided 2026-08-08 after the user asked to investigate "stream only". The
+options, measured rather than assumed: true no-disk streaming over BitTorrent
+exists in no client worth using (libtorrent needs a custom storage plugin;
+webtorrent/peerflix/Stremio all download to disk and delete after), and a
+client swap buys nothing we do not already have. So Miru does what Stremio
+does: the disk is the buffer. Watch Now marks the grab `ephemeral` — never
+promoted into the library, swept by a janitor after a day of idleness (idle
+against last playback, not age; never-played grabs age out on a wider window;
+a sleeping PC defers the sweep). Keep is the one button that changes the
+outcome, and the remux handover makes a kept film playable without a second
+remux. `cancel()` still defaults to keeping bytes; only the janitor deletes.
+
 ## Known open bugs, unrelated to any plan
 
-- `_restate_works` is an N+1 with row locks.
-- Content-Length is promised before the read, so a short read truncates the body
-  under a length the client was already told.
-- The picker does not prefer a batch or a complete season.
-- qBittorrent's password is still the literal string `YOURPASSWORD`.
-- The library player shows a bare spinner for the minutes a large remux takes —
-  reported as "remux is failing", when it was silent rather than broken.
-- A film watched while downloading is remuxed again when opened from the
-  library, under a different cache key.
+- qBittorrent's password is still the placeholder. `deploy/
+  rotate-qbittorrent-password.py` is ready; it refuses to run until the PC is
+  awake — run it then and restart `miru-api`.
+- 323 anime/series releases carry no episode number and are not packs — a
+  separate parsing job, measured 2026-08-08.
+
+Closed 2026-08-08, this session: silent library remux (progress surfaced end to
+end), double remux (live remux adopted on promotion), Content-Length short-read
+(aborts loudly), `_restate_works` N+1 (one aggregate, query count pinned by
+test), per-category refresh, sheet ownership. The stale "picker does not prefer
+a batch" line described `eb1a542`'s fix and is gone.

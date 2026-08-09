@@ -7,6 +7,13 @@ it. Everything here is measured, not remembered. Commits are on `main`.
 
 ## 1. Open right now, in the order I would take them
 
+> **2026-08-08, later session:** every item in this section except the
+> qBittorrent password (script ready, PC asleep) and the 323 episodeless
+> releases has shipped. §1.3's question was answered: Watch Now is now
+> ephemeral — the Stremio model — with Keep as the opt-in. See
+> docs/plans/STATUS.md for the settled record. The section below is kept as
+> written for the reasoning.
+
 ### 1.1 The library player shows a bare spinner for minutes
 
 **Reported as "remux is failing". It is not failing — it is silent.**
