@@ -242,7 +242,10 @@ class QBittorrentProvider:
             # qBittorrent reports 8640000 (100 days) to mean "no idea", which is
             # worse than saying nothing.
             eta_seconds=int(eta) if isinstance(eta, int) and 0 < eta < 8640000 else None,
-            error=None,
+            # qBittorrent's error states carry no message over the API, but
+            # they have well-known causes — and "failed, error: None" told the
+            # user nothing while a stale NFS mount held every download at 0%.
+            error=_ERROR_CAUSE.get(t.get("state", "")),
         )
 
     def cancel(self, job_id: str, delete_files: bool = False) -> None:
@@ -350,6 +353,20 @@ class QBittorrentProvider:
 
 # qBittorrent's vocabulary is wider than ours and leaks implementation detail
 # (three different flavours of "paused"). Translate rather than pass through.
+# What qBittorrent's terse error states actually mean, in words a person can
+# act on. `error` is almost always the save path being unwritable — measured
+# here when the laptop's disk re-enumerated and the PC's NFS mount went stale.
+_ERROR_CAUSE = {
+    "error": (
+        "qBittorrent can't write to its download folder. If the laptop's disk "
+        "was reconnected, remount /mnt/incoming on the PC, then Resume."
+    ),
+    "missingFiles": (
+        "The downloaded files are missing from the PC's download folder — "
+        "check the mount, then Resume to re-download what's gone."
+    ),
+}
+
 _STATES = {
     "error": "failed",
     "missingFiles": "failed",

@@ -115,12 +115,19 @@ function Row({ d, onAct }: { d: ActiveDownload; onAct: () => void }) {
             </Button>
           )}
           {d.state === "failed" ? (
-            // The one row cancel could never touch: the downloader has
-            // forgotten the torrent, so this clears our side only.
-            <Button size="sm" variant="ghost" disabled={busy}
-                    onClick={() => act("dismiss")}>
-              Remove
-            </Button>
+            <>
+              {/* An ERRORED torrent (stale mount, full disk) recovers with a
+                  resume once the cause is fixed; a FORGOTTEN one 502s, which
+                  surfaces honestly. Remove clears our side only. */}
+              <Button size="sm" variant="secondary" disabled={busy}
+                      onClick={() => act("resume")}>
+                Retry
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy}
+                      onClick={() => act("dismiss")}>
+                Remove
+              </Button>
+            </>
           ) : (
             (active || d.state === "paused") && (
               <Button size="sm" variant="ghost" disabled={busy}

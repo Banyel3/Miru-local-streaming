@@ -349,3 +349,29 @@ class TestAskingAboutEveryDownloadAtOnce:
         _, replies = calls
         replies["/torrents/info"] = []
         assert qb.statuses() == {}
+
+
+class TestAnErroredTorrentSaysWhy:
+    def test_the_error_state_carries_a_cause_not_a_shrug(self, qb, calls):
+        """Iron Man 2 sat at 0% in qBittorrent state 'error' and Miru reported
+        state=failed, error=None — nothing named the cause while the real
+        problem was a stale NFS mount on the PC. qBittorrent's error state
+        almost always means it cannot write to its save path, so say that.
+        """
+        _, replies = calls
+        replies["/torrents/info"] = [{
+            "state": "error", "progress": 0.0, "size": 100, "completed": 0,
+            "dlspeed": 0, "eta": 8640000, "name": "Iron Man 2",
+        }]
+        s = qb.status("abc")
+        assert s.state == "failed"
+        assert s.error and "write" in s.error.lower()
+
+    def test_missing_files_names_itself_too(self, qb, calls):
+        _, replies = calls
+        replies["/torrents/info"] = [{
+            "state": "missingFiles", "progress": 0.4, "size": 100, "completed": 40,
+            "dlspeed": 0, "eta": 8640000, "name": "Show",
+        }]
+        s = qb.status("abc")
+        assert s.error and "files" in s.error.lower()
