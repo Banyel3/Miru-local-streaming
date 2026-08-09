@@ -263,3 +263,78 @@ class TestRecencyOrdering:
         # the rail entirely.
         work = db_session.execute(select(CatalogWork)).scalar_one()
         assert work.latest_release_at is not None
+
+
+class TestRestatingIsOnePassNotOnePerWork:
+    def test_a_catalogue_of_many_works_is_restated_in_a_bounded_number_of_queries(
+        self, db_session
+    ):
+        """`_restate_works` ran one release SELECT per work.
+
+        A refresh restates the whole catalogue — 500+ works — so every
+        half-hourly pass paid 500 round trips with row loads for an aggregate
+        the database computes in one. The count below is the contract: it must
+        not scale with the number of works.
+        """
+        from sqlalchemy import event
+
+        from miru.catalog.ingest import _restate_works
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        for i in range(30):
+            w = CatalogWork(kind="anime", normalised_title=f"w{i}", display_title=f"W{i}")
+            db_session.add(w)
+            db_session.flush()
+            db_session.add(CatalogRelease(
+                info_hash=f"{i:040x}", indexer="Nyaa.si", guid=f"g{i}", title=f"W{i} - 01",
+                kind="anime", work_id=w.id, parsed_title=f"W{i}", seeder_pct=0.5,
+                seeders=10, leechers=0, size_bytes=1, magnet=f"magnet:?xt=urn:btih:{i:040x}",
+            ))
+        db_session.commit()
+
+        statements = []
+
+        def record(conn, cursor, statement, *a):
+            statements.append(statement)
+
+        engine = db_session.get_bind()
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            _restate_works(db_session)
+            db_session.commit()
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        assert len(selects) <= 4, f"{len(selects)} SELECTs for 30 works"
+
+    def test_the_numbers_come_out_the_same_as_the_per_work_pass(self, db_session):
+        # Pinning behaviour, not shape: counts, best pct ignoring stale rows,
+        # ghost deletion.
+        from miru.catalog.ingest import _restate_works
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        keep = CatalogWork(kind="anime", normalised_title="keep", display_title="Keep")
+        ghost = CatalogWork(kind="anime", normalised_title="ghost", display_title="Ghost")
+        db_session.add_all([keep, ghost])
+        db_session.flush()
+        db_session.add_all([
+            CatalogRelease(info_hash="a" * 40, indexer="n", guid="a", title="Keep - 01",
+                           kind="anime", work_id=keep.id, parsed_title="Keep",
+                           seeder_pct=0.4, seeders=5, leechers=0, size_bytes=1,
+                           magnet="magnet:?a", missed_refreshes=0),
+            CatalogRelease(info_hash="b" * 40, indexer="n", guid="b", title="Keep - 02",
+                           kind="anime", work_id=keep.id, parsed_title="Keep",
+                           seeder_pct=0.9, seeders=9, leechers=0, size_bytes=1,
+                           magnet="magnet:?b",
+                           missed_refreshes=CatalogRelease.STALE_AFTER),
+        ])
+        db_session.commit()
+
+        _restate_works(db_session)
+        db_session.commit()
+
+        assert keep.release_count == 2
+        # The stale release's better percentile must not win.
+        assert keep.best_seeder_pct == pytest.approx(0.4)
+        assert db_session.get(CatalogWork, ghost.id) is None

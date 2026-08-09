@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import re
 from pathlib import Path
 
@@ -64,6 +65,54 @@ def info_hash_key(info_hash: str) -> int:
     which inside a route is a 500 with a stack trace instead of an answer.
     """
     return int.from_bytes(hashlib.sha1(info_hash.encode()).digest()[:6], "big")
+
+
+def _read_exactly(
+    path: Path,
+    *,
+    start: int,
+    length: int,
+    retry_wait: float = 0.2,
+    retries: int = 5,
+    on_wait=None,
+    chunk: int | None = None,
+):
+    """Exactly `length` bytes from `start`, or a loud failure — never fewer.
+
+    Content-Length went on the wire before this runs, and a generator that
+    "ends cleanly" short of it delivers a truncated response the client sees as
+    a mid-playback network error with nothing to explain it. Bytes below the
+    stat'd ceiling are append-only in every path served here, so an empty read
+    inside the promised range means the source was replaced or truncated —
+    after a brief retry for a writer mid-flush, aborting is the honest answer.
+
+    `on_wait` is a test seam, called before each retry sleep.
+
+    Unbuffered on purpose: this loop does its own chunking, so BufferedReader
+    only adds a copy — and its read-ahead serves bytes from memory after the
+    file has been truncated underneath it, hiding exactly the condition this
+    exists to catch.
+    """
+    with path.open("rb", buffering=0) as fh:
+        fh.seek(start)
+        left = length
+        patience = retries
+        while left > 0:
+            block = fh.read(min(chunk or CHUNK, left))
+            if not block:
+                if patience > 0:
+                    patience -= 1
+                    if on_wait:
+                        on_wait()
+                    time.sleep(retry_wait)
+                    continue
+                raise RuntimeError(
+                    f"{path.name}: source ended {left} bytes short of the "
+                    "promised range — replaced or truncated underneath the reader"
+                )
+            patience = retries
+            left -= len(block)
+            yield block
 
 
 def _ceiling_now(info_hash: str, path: Path) -> int:
@@ -280,17 +329,7 @@ def live_stream(info_hash: str, request: Request, range_header: str | None = Hea
         )
 
     length = end - start + 1
-
-    def body():
-        with path.open("rb") as fh:
-            fh.seek(start)
-            left = length
-            while left > 0:
-                block = fh.read(min(CHUNK, left))
-                if not block:
-                    break  # the writer has not caught up; end cleanly
-                left -= len(block)
-                yield block
+    body = lambda: _read_exactly(path, start=start, length=length)  # noqa: E731
 
     return StreamingResponse(
         body(),

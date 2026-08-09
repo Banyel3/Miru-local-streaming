@@ -171,3 +171,60 @@ class TestRangeHeaderIsNotHandRolledBadly:
         assert client.get(
             "/api/stream/live/abc", headers={"Range": "bytes=9000-9999"}
         ).status_code == 416
+
+
+class TestAShortReadIsAbortedNotEndedCleanly:
+    """Content-Length is promised before the body streams.
+
+    The generator's `if not block: break` ended a response short of that
+    promise, which the HTTP layer delivers as a truncated body — most clients
+    surface it as a network error mid-playback with no way to tell why. Bytes
+    below the stat'd ceiling are append-only in every path served here, so an
+    empty read inside the promised range is abnormal: a replaced or truncated
+    source. Aborting loudly beats delivering fewer bytes than the header said.
+    """
+
+    def test_a_source_truncated_mid_read_raises_instead_of_ending_short(self, tmp_path):
+        from miru.streaming.partial import _read_exactly
+
+        f = tmp_path / "shrunk.mp4"
+        f.write_bytes(b"x" * 100)
+
+        got = bytearray()
+        # A small chunk, so the read is still in flight when the file shrinks —
+        # with the default 256 KiB chunk a 100-byte file is consumed in one
+        # read and the race can never be exercised.
+        gen = _read_exactly(f, start=0, length=100, retry_wait=0.01, retries=2, chunk=25)
+        with pytest.raises(RuntimeError):
+            for block in gen:
+                got += block
+                if len(got) >= 50:
+                    f.write_bytes(b"x" * 10)  # the file shrinks underneath us
+
+    def test_a_normal_read_delivers_exactly_the_promise(self, tmp_path):
+        from miru.streaming.partial import _read_exactly
+
+        f = tmp_path / "fine.mp4"
+        f.write_bytes(bytes(range(256)) * 4)
+        got = b"".join(_read_exactly(f, start=64, length=512))
+        assert got == (bytes(range(256)) * 4)[64:576]
+
+    def test_a_writer_that_catches_up_within_the_retry_window_is_fine(self, tmp_path):
+        # The retry exists because stat-then-read races a live writer; a block
+        # that arrives a beat later is the normal case, not the error.
+        from miru.streaming.partial import _read_exactly
+
+        f = tmp_path / "growing.mp4"
+        f.write_bytes(b"a" * 30)
+        appended = {"done": False}
+
+        def late_append():
+            if not appended["done"]:
+                f.open("ab").write(b"b" * 70)
+                appended["done"] = True
+
+        got = bytearray()
+        for block in _read_exactly(f, start=0, length=100, retry_wait=0.01,
+                                   retries=5, on_wait=late_append, chunk=25):
+            got += block
+        assert bytes(got) == b"a" * 30 + b"b" * 70

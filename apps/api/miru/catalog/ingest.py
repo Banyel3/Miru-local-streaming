@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from miru.acquisition.provider import SearchResult
@@ -185,25 +185,49 @@ def _restate_works(db: Session, only: set[int] | None = None) -> None:
     because it also ages rows it did not see; a search touched a handful of
     works and has no business loading every release in the catalogue.
     """
+    from sqlalchemy import func
+
+    # One aggregate for every work, not one release SELECT per work — a refresh
+    # restates the whole catalogue, so the old shape paid 500+ round trips per
+    # half-hourly pass for numbers the database computes in one.
+    agg = (
+        select(
+            CatalogRelease.work_id,
+            func.count().label("n"),
+            # `stale` and `grabbable` are Python properties; their SQL
+            # equivalents are spelled out here and pinned by the behaviour test.
+            func.max(
+                case(
+                    (
+                        (CatalogRelease.missed_refreshes < CatalogRelease.STALE_AFTER)
+                        & (CatalogRelease.magnet.isnot(None) | CatalogRelease.download_url.isnot(None)),
+                        CatalogRelease.seeder_pct,
+                    ),
+                    else_=None,
+                )
+            ).label("best"),
+            func.max(CatalogRelease.published_at).label("latest"),
+        ).group_by(CatalogRelease.work_id)
+    )
+    if only is not None:
+        agg = agg.where(CatalogRelease.work_id.in_(only))
+    stats = {row.work_id: row for row in db.execute(agg)}
+
     q = select(CatalogWork)
     if only is not None:
         q = q.where(CatalogWork.id.in_(only))
     for work in db.execute(q).scalars().all():
-        releases = db.execute(
-            select(CatalogRelease).where(CatalogRelease.work_id == work.id)
-        ).scalars().all()
+        row = stats.get(work.id)
         # A work whose releases all moved elsewhere is a ghost: invisible on the
         # wall (rails filter on release_count) but still holding the unique key
         # the card that absorbed them needs. Deleted rather than left behind —
         # `JUJUTSU KAISEN [0]` beside `Jujutsu Kaisen [2]` was one of 21 of them.
-        if not releases and not work.library_file_id and not work.download_job_id:
+        if row is None and not work.library_file_id and not work.download_job_id:
             db.delete(work)
             continue
-        live = [r for r in releases if not r.stale and r.grabbable]
-        work.release_count = len(releases)
-        work.best_seeder_pct = max((r.seeder_pct for r in live), default=0.0)
-        dates = [r.published_at for r in releases if r.published_at]
-        work.latest_release_at = max(dates) if dates else work.first_seen_at
+        work.release_count = row.n if row else 0
+        work.best_seeder_pct = (row.best if row else None) or 0.0
+        work.latest_release_at = (row.latest if row else None) or work.first_seen_at
 
 
 def _ingest(
