@@ -91,3 +91,42 @@ class TestAYearInTheTitleIsAYear:
         # Real titles carry numbers. Only a trailing 19xx/20xx is a date.
         got = parse("[SubsPlease] 86 Eighty Six - 09 (1080p)", "anime")
         assert "86" in got.title
+
+
+class TestPackShapesTheSweepActuallyBroughtBack:
+    """Every name here was ingested by the live sweep and minted a junk card.
+
+    `Naruto Shippuuden 01 - 500(Batch)` became a work called "Naruto Shippuuden
+    01"; `[Taka] ... 132 - 153 [BATCH]` became "Naruto Shippuuden 132"; a
+    release literally called "Naruto Shippuuden Complete" became a card by that
+    name. Three cards named Naruto Shippuuden sat on Trending at once.
+    """
+
+    def test_a_bare_spaced_range_is_read_when_the_name_says_batch(self):
+        got = parse("[HorribleSubs] Naruto Shippuuden 01 - 500(Batch) [480p][720p] [1080p]", "anime")
+        assert got.title == "Naruto Shippuuden"
+        assert (got.episode, got.episode_end) == (1, 500)
+        assert got.complete is True
+
+    def test_the_taka_shape(self):
+        got = parse("[Taka] Naruto Shippuuden 132 - 153 [720p][BATCH]", "anime")
+        assert got.title == "Naruto Shippuuden"
+        assert (got.episode, got.episode_end) == (132, 153)
+
+    def test_a_bare_range_without_a_batch_word_is_left_alone(self):
+        # "24 - 7" in a title, a score, a date — a bare range is only believed
+        # when the name itself says it is a batch. The bracketed form stays
+        # unconditional as before.
+        got = parse("Brooklyn Nine 9 - 9 1080p WEB", "series")
+        assert got.episode_end is None
+
+    def test_the_word_complete_does_not_become_part_of_the_name(self):
+        got = parse("Naruto Shippuuden Complete", "series")
+        assert got.title == "Naruto Shippuuden"
+        assert got.complete is True
+
+    def test_a_title_legitimately_containing_complete_survives(self):
+        # Only a TRAILING marker comes off. A show with the word inside its
+        # name keeps it.
+        got = parse("The Complete History of Everything S01E01 1080p", "series")
+        assert "Complete" in got.title

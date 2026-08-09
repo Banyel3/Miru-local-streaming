@@ -53,6 +53,15 @@ _PACK_TAIL = re.compile(r"\+\s*(movies|specials|ova|oad|ovas|extras|nc(?:op|ed))
 # An episode range in its own bracket or parens: (01-28), (0001-1071), [001-574].
 # Anchored to the delimiters so a year, a resolution or a date cannot match.
 _PACK_RANGE = re.compile(r"[\[(]\s*(\d{1,4})\s*[-–~]\s*(\d{1,4})\s*[\])]")
+
+# The same range written bare with spaces: `Naruto Shippuuden 01 - 500(Batch)`.
+# Believed ONLY when the name itself says batch/complete — a bare pair of
+# numbers is otherwise a score, a date, or part of a name (`Brooklyn Nine 9`).
+_BARE_RANGE = re.compile(r"\b(\d{1,4})\s*[-–~]\s*(\d{1,4})\s*(?=[\[(\s]|$)")
+
+# A trailing marker is release furniture, not a name: a release literally
+# called "Naruto Shippuuden Complete" minted a card by that name.
+_TRAILING_MARKER = re.compile(r"[\s\-]+(batch|complete)\s*$", re.I)
 _DIMENSIONS = re.compile(r"\b(\d{3,4})\s*x\s*(\d{3,4})\b", re.I)
 
 
@@ -341,8 +350,14 @@ def _parse_general(name: str) -> Parsed:
 
 
 def _pack_range(name: str) -> tuple[int | None, int | None]:
-    """An episode range a pack states in brackets, if it states one."""
-    if m := _PACK_RANGE.search(_PACK_TAIL.sub("", name)):
+    """An episode range a pack states, bracketed or — for a declared batch — bare."""
+    cleaned = _PACK_TAIL.sub("", name)
+    candidates = [_PACK_RANGE.search(cleaned)]
+    if _COMPLETE.search(cleaned):
+        candidates.append(_BARE_RANGE.search(cleaned))
+    for m in candidates:
+        if not m:
+            continue
         first, last = int(m.group(1)), int(m.group(2))
         # Ordered, and not a resolution pair: `1920x1080` cannot reach here
         # because of the delimiters, but `(2020-2024)` is a year span.
@@ -381,11 +396,23 @@ def _as_pack(got: Parsed, name: str) -> Parsed:
         got.title = got.title[: m.start()].strip()
         got.year = got.year or int(m.group(1))
 
+    # A trailing batch/complete marker is furniture the episode parsers leave
+    # in the title when nothing else follows it.
+    if got.title:
+        got.title = _TRAILING_MARKER.sub("", got.title).strip()
+
     first, last = _pack_range(name)
     if first is not None and got.episode_end is None:
         # Only when the episode parser did not already find a range: it reads
         # `- 09` and `S02E07` correctly and this must not overrule it.
         got.episode, got.episode_end = first, last
+        # The episode parser saw the range's first number as part of the NAME —
+        # `Naruto Shippuuden 01 - 500(Batch)` titled itself "Naruto Shippuuden
+        # 01" and minted its own card. The number now belongs to the range, so
+        # it comes off the title.
+        if got.title and (m := re.search(r"\s(\d{1,4})$", got.title)):
+            if int(m.group(1)) == first:
+                got.title = got.title[: m.start()].strip()
 
     # "Complete" means the whole run, not merely a range. `One Piece 741-743` is
     # three episodes out of the middle and offering it as the series would be a

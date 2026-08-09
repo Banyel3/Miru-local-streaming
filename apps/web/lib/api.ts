@@ -472,9 +472,13 @@ export function uploadedAgo(iso: string) {
 }
 
 export function playbackNote(r: CatalogRelease) {
+  // About PLAYBACK only. Downloading always needs the PC — qBittorrent lives
+  // there — so "the PC can stay asleep" sat one line above a Watch Now that
+  // was dead because the PC was asleep. Two different "needs the PC" facts;
+  // this one must not claim the other.
   return r.needs_pc
-    ? { text: "Needs the PC awake to transcode", tone: "warn" as const }
-    : { text: "Plays directly — the PC can stay asleep", tone: "good" as const };
+    ? { text: "Needs the PC's GPU to transcode once downloaded", tone: "warn" as const }
+    : { text: "Plays directly once downloaded — no transcoding", tone: "good" as const };
 }
 
 export function releaseSpec(r: CatalogRelease) {
