@@ -51,9 +51,13 @@ def stream(file_id: int, db: Session = Depends(get_db)):
             path = remux.cached_path(file_id, path)
         else:
             remux.ensure(file_id, path)
+            # Retry-After, same as the live path's 503: lib/live.ts reads both
+            # as "come back", and a 425 with no hint is how a 3.8 GB remux ran
+            # seven minutes behind a bare spinner.
             raise HTTPException(
                 425 if state != "failed" else 500,
                 remux.error(file_id) or "Preparing this file for playback — try again shortly.",
+                headers={"Retry-After": "5"} if state != "failed" else None,
             )
 
     return FileResponse(
@@ -62,6 +66,36 @@ def stream(file_id: int, db: Session = Depends(get_db)):
         filename=path.name,
         content_disposition_type="inline",
     )
+
+
+@router.get("/{file_id}/status")
+def stream_status(file_id: int, db: Session = Depends(get_db)):
+    """What stands between this file and playback, pollable.
+
+    The 425 the stream answers while a remux runs lands inside the <video>
+    element's own request, where no page code can read it. This is the same
+    fact somewhere a page CAN read — with the percent that sat unused on disk
+    for the seven silent minutes a 3.8 GB film took.
+    """
+    record = db.get(MediaFile, file_id)
+    if not record:
+        raise HTTPException(404, "no such file")
+    if record.playback_strategy != "remux":
+        # Most of the library never needs ffmpeg, and the page must not wait
+        # on a status that will never change.
+        return {"state": "ready", "percent": None, "error": None}
+
+    path = Path(record.path)
+    if not path.is_file():
+        raise HTTPException(410, "file is gone — rescan the library")
+
+    state = remux.state(file_id, path)
+    pct = remux.progress(file_id, path)
+    return {
+        "state": state if state != "absent" else "working",
+        "percent": round(pct * 100) if pct is not None else None,
+        "error": remux.error(file_id) if state == "failed" else None,
+    }
 
 
 @router.get("/{file_id}/index.m3u8")

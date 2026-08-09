@@ -302,3 +302,50 @@ class TestWhenTheDownloadFinishesTheWatchPageGoesSomewhere:
         monkeypatch.setattr(mod, "supports_streaming", lambda: True)
         monkeypatch.setattr(mod, "_local_path", lambda p: None)
         assert client.get("/api/stream/live/abc/status").json()["library_file_id"] is None
+
+
+class TestProgressIsAFactNotAFeeling:
+    """The library remux of a 3.8 GB film took ~7 minutes and reported nothing.
+
+    The watch page showed a bare spinner the whole time and it was reported as
+    "remux is failing" — the correct reading of what the UI showed. The number
+    that would have said otherwise was on disk the entire time: the size of the
+    .part file ffmpeg is writing, against the size of the source.
+    """
+
+    def test_a_running_remux_reports_how_far_it_has_got(self, tmp_path):
+        src = tmp_path / "show.mkv"
+        src.write_bytes(b"x" * 1000)
+        part = remux.cached_path(1, src).with_suffix(".part.mp4")
+        part.write_bytes(b"y" * 400)
+        assert remux.progress(1, src) == pytest.approx(0.4)
+
+    def test_the_number_grows_as_ffmpeg_writes(self, tmp_path):
+        src = tmp_path / "show.mkv"
+        src.write_bytes(b"x" * 1000)
+        part = remux.cached_path(1, src).with_suffix(".part.mp4")
+        part.write_bytes(b"y" * 100)
+        early = remux.progress(1, src)
+        part.write_bytes(b"y" * 900)
+        assert remux.progress(1, src) > early
+
+    def test_no_part_file_means_no_number(self, tmp_path):
+        # None, not 0.0 — "not started" and "just started" are different
+        # answers, and the UI should not show a stuck 0%.
+        src = tmp_path / "show.mkv"
+        src.write_bytes(b"x" * 1000)
+        assert remux.progress(1, src) is None
+
+    def test_a_remux_larger_than_its_source_never_reports_past_one(self, tmp_path):
+        # Stream-copy output can exceed the source (container overhead). A
+        # progress bar past 100% reads as broken.
+        src = tmp_path / "show.mkv"
+        src.write_bytes(b"x" * 100)
+        part = remux.cached_path(1, src).with_suffix(".part.mp4")
+        part.write_bytes(b"y" * 150)
+        assert remux.progress(1, src) == 1.0
+
+    def test_an_empty_source_does_not_divide_by_zero(self, tmp_path):
+        src = tmp_path / "empty.mkv"
+        src.write_bytes(b"")
+        assert remux.progress(1, src) is None

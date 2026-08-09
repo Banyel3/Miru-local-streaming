@@ -73,3 +73,39 @@ export function streamState(status: number): StreamState {
 export function canPlayNow(s: { watchable: boolean; streamReady: boolean }): boolean {
   return s.watchable && s.streamReady;
 }
+
+/** What `/api/stream/{id}/status` reports for a library file. */
+export type RemuxStatus = {
+  state: "ready" | "working" | "failed";
+  percent: number | null;
+  error: string | null;
+};
+
+/**
+ * What the watch page should show while a library remux runs.
+ *
+ * A 3.8 GB MKV took ~7 minutes to remux behind a bare spinner and was reported
+ * as "remux is failing" — the correct reading of what the page showed. The
+ * percent was on disk the whole time; this is where it reaches the screen.
+ */
+export function remuxWait(s: RemuxStatus): {
+  done: boolean;
+  failed: string | null;
+  label: string;
+} {
+  if (s.state === "ready") return { done: true, failed: null, label: "" };
+  if (s.state === "failed") {
+    return {
+      done: false,
+      failed: s.error ?? "This file could not be prepared for your browser.",
+      label: "",
+    };
+  }
+  return {
+    done: false,
+    failed: null,
+    // No stuck 0% before ffmpeg writes its first byte — "not started" and
+    // "just started" are different answers.
+    label: s.percent != null ? `Preparing for your browser — ${s.percent}%` : "Preparing for your browser…",
+  };
+}

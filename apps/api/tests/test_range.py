@@ -71,3 +71,74 @@ def test_missing_file_is_410_not_500(client):
 
 def test_unknown_id_is_404(client):
     assert client.get("/api/stream/99").status_code == 404
+
+
+class TestTheStatusRouteSaysWhatIsHappening:
+    """A 3.8 GB remux ran seven minutes behind a bare spinner.
+
+    The 425 the stream answers lands inside the <video> element's own request,
+    where no page code can read it — so the watch page needs a route it CAN
+    read: state plus a percent, cheap enough to poll every 1.5s.
+    """
+
+    @pytest.fixture
+    def remuxing(self, tmp_path, monkeypatch):
+        from miru.streaming import remux
+
+        media = tmp_path / "show.mkv"
+        media.write_bytes(b"x" * 1000)
+        record = MediaFile(id=7, path=str(media), title="show", playback_strategy="remux")
+        direct = tmp_path / "plain.mp4"
+        direct.write_bytes(BODY)
+        plain = MediaFile(id=8, path=str(direct), title="plain", playback_strategy="direct")
+
+        class FakeSession:
+            def get(self, _model, pk):
+                return {7: record, 8: plain}.get(pk)
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = lambda: FakeSession()
+        monkeypatch.setattr(remux.settings, "remux_cache_path", str(tmp_path / "cache"))
+        monkeypatch.setattr(remux, "_running", {})
+        monkeypatch.setattr(remux, "_failed", {})
+        return TestClient(app), media, remux
+
+    def test_a_working_remux_reports_its_percent(self, remuxing, monkeypatch):
+        client, media, remux = remuxing
+        part = remux.cached_path(7, media).with_suffix(".part.mp4")
+        part.parent.mkdir(parents=True, exist_ok=True)
+        part.write_bytes(b"y" * 430)
+        monkeypatch.setattr(remux, "state", lambda *a, **k: "working")
+        body = client.get("/api/stream/7/status").json()
+        assert body["state"] == "working"
+        assert body["percent"] == 43
+
+    def test_a_finished_remux_is_ready(self, remuxing, monkeypatch):
+        client, media, remux = remuxing
+        monkeypatch.setattr(remux, "state", lambda *a, **k: "ready")
+        assert client.get("/api/stream/7/status").json()["state"] == "ready"
+
+    def test_a_failed_remux_says_why(self, remuxing, monkeypatch):
+        client, media, remux = remuxing
+        monkeypatch.setattr(remux, "state", lambda *a, **k: "failed")
+        monkeypatch.setattr(remux, "error", lambda *a, **k: "ffmpeg exited 1")
+        body = client.get("/api/stream/7/status").json()
+        assert body["state"] == "failed"
+        assert "ffmpeg" in body["error"]
+
+    def test_a_direct_file_is_ready_without_touching_the_remux(self, remuxing):
+        # Most of the library never needs ffmpeg; the page must not wait on a
+        # status that will never change.
+        client, _, _ = remuxing
+        assert client.get("/api/stream/8/status").json()["state"] == "ready"
+
+    def test_the_425_tells_the_client_when_to_come_back(self, remuxing, monkeypatch):
+        # The live path's 503 carries Retry-After and lib/live.ts reads it as
+        # "waiting"; the library 425 carried nothing.
+        client, _, remux = remuxing
+        monkeypatch.setattr(remux, "state", lambda *a, **k: "working")
+        monkeypatch.setattr(remux, "ensure", lambda *a, **k: "working")
+        r = client.get("/api/stream/7")
+        assert r.status_code == 425
+        assert "retry-after" in {k.lower() for k in r.headers}

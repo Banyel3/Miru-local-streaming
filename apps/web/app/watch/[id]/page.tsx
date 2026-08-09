@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Player } from "./Player";
+import { RemuxWait } from "./RemuxWait";
 import { ApiDown } from "@/components/ApiDown";
 import { ButtonLink } from "@/components/ui";
 import { ChevronLeft } from "@/components/icons";
@@ -86,20 +87,27 @@ export default async function WatchPage({
     );
   }
 
-  return (
-    <Player
-      src={playbackUrl(file)}
-      mime={mimeType(file)}
-      title={file.title}
-      subtitle={[file.container?.toUpperCase(), file.video_codec, file.audio_codec]
-        .filter(Boolean)
-        .join(" · ")}
-      backHref={`/file/${file.id}`}
-      progressKey={file.id}
-      tracks={subtitleTracks(file)}
-      strategy={file.playback_strategy}
-      next={next && { href: `/watch/${next.id}`, label: displayTitle(next).label, seed: next.title }}
-      restart={restart === "1"}
-    />
+  const player = {
+    src: playbackUrl(file),
+    mime: mimeType(file),
+    title: file.title,
+    subtitle: [file.container?.toUpperCase(), file.video_codec, file.audio_codec]
+      .filter(Boolean)
+      .join(" · "),
+    backHref: `/file/${file.id}`,
+    progressKey: file.id,
+    tracks: subtitleTracks(file),
+    strategy: file.playback_strategy,
+    next: next && { href: `/watch/${next.id}`, label: displayTitle(next).label, seed: next.title },
+    restart: restart === "1",
+  };
+
+  // A remux file's first request can be a multi-minute 425 the <video> element
+  // swallows whole — RemuxWait polls the status route and shows the percent
+  // instead of a dead player. Direct files mount immediately, as before.
+  return file.playback_strategy === "remux" ? (
+    <RemuxWait fileId={file.id} {...player} />
+  ) : (
+    <Player {...player} />
   );
 }

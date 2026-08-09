@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { canPlayNow, endedForReal, resumeSrc, streamState } from "./live";
+import { canPlayNow, endedForReal, remuxWait, resumeSrc, streamState } from "./live";
 
 const done = { complete: true, playable_bytes: 100, size_bytes: 100 };
 const growing = { complete: false, playable_bytes: 30, size_bytes: 100 };
@@ -104,5 +104,33 @@ describe("waiting for the stream to actually be servable", () => {
   it("treats a 502 as a real failure worth telling the user about", () => {
     // The remux failed. Waiting forever would be a lie.
     expect(streamState(502)).toBe("failed");
+  });
+});
+
+describe("waiting for a library remux", () => {
+  // The watch page showed a bare spinner for the ~7 minutes a 3.8 GB remux
+  // took, and it was reported as "remux is failing". The remux was fine; the
+  // page had nothing to say. These pin what it says now.
+  it("shows the percent while the remux runs", () => {
+    expect(remuxWait({ state: "working", percent: 43, error: null })).toEqual({
+      done: false,
+      failed: null,
+      label: "Preparing for your browser — 43%",
+    });
+  });
+
+  it("does not show a stuck 0% before ffmpeg has written anything", () => {
+    const w = remuxWait({ state: "working", percent: null, error: null });
+    expect(w.label).toBe("Preparing for your browser…");
+  });
+
+  it("is done when the stream is ready", () => {
+    expect(remuxWait({ state: "ready", percent: null, error: null }).done).toBe(true);
+  });
+
+  it("a failure is a failure, not an eternal wait", () => {
+    const w = remuxWait({ state: "failed", percent: null, error: "ffmpeg exited 1" });
+    expect(w.done).toBe(false);
+    expect(w.failed).toContain("ffmpeg");
   });
 });

@@ -157,6 +157,25 @@ def follow(source: Path, ceiling, alive, chunk: int = 1 << 20, poll: float = 1.0
             yield block
 
 
+def progress(file_id: int, source: Path) -> float | None:
+    """How far a running remux has got, 0..1, or None when nothing is written.
+
+    The .part file's size against the source's. A stream-copy remux tracks its
+    input closely enough for a progress bar — this is a progress bar, not an
+    ETA contract. The number existed on disk the whole time a 3.8 GB film spent
+    seven silent minutes behind a bare spinner; nothing surfaced it.
+    """
+    part = cached_path(file_id, source).with_suffix(".part.mp4")
+    try:
+        written = part.stat().st_size
+        total = source.stat().st_size
+    except OSError:
+        return None
+    if not total:
+        return None
+    return min(1.0, written / total)
+
+
 def state(file_id: int, source: Path, prefix_bytes: int | None = None) -> str:
     """`ready` | `working` | `failed` | `absent`."""
     if cached_path(file_id, source, prefix_bytes).exists():
