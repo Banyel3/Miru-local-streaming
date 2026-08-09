@@ -310,3 +310,139 @@ class TestStreamingLeavesAHeartbeat:
         stamp = dict(mod._touched)
         real("feed" + "0" * 36)
         assert mod._touched == stamp
+
+
+class TestTheSkipListNamesWhatIsActuallyOnDisk:
+    """Scary Movie was ephemeral and landed in the library anyway.
+
+    The skip-list stored the TORRENT name; the on-disk entry was the folder
+    `www.UIndex.org    -    Scary Movie…`. promote() compared entry names,
+    never matched, and moved the stream into the library — the exact thing
+    ephemeral exists to prevent. qBittorrent's own row names the real entry in
+    `content_path`; that is what the poll must remember.
+    """
+
+    def test_the_poll_stores_the_content_name_not_the_torrent_name(
+        self, client, db_session, monkeypatch
+    ):
+        from miru.catalog import router as mod
+        from miru.acquisition.provider import DownloadStatus
+
+        w = _work(db_session, job="aa" + "0" * 38, ephemeral=True)
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+
+        class FakeDl:
+            def statuses(self):
+                return {"aa" + "0" * 38: DownloadStatus(
+                    id="aa" + "0" * 38, state="downloading", progress=0.4,
+                    name="Scary Movie 2026 1080p WEBRip",
+                    downloaded_bytes=1, total_bytes=2, speed_bps=1,
+                    eta_seconds=None, error=None,
+                    content_name="www.UIndex.org - Scary Movie 2026",
+                )}
+
+        monkeypatch.setattr(mod, "downloader", lambda: FakeDl())
+        client.get("/api/catalog/downloads")
+        db_session.refresh(w)
+        assert w.download_name == "www.UIndex.org - Scary Movie 2026"
+
+    def test_qbittorrent_reports_the_content_basename(self, monkeypatch):
+        import miru.acquisition.qbittorrent as qb
+
+        monkeypatch.setattr(qb, "_json", lambda p, q=None: [{
+            "hash": "bb" + "0" * 38, "state": "downloading", "progress": 0.4,
+            "size": 2, "completed": 1, "dlspeed": 1, "eta": 60,
+            "name": "Scary Movie 2026 1080p WEBRip",
+            "content_path": "/mnt/incoming/www.UIndex.org - Scary Movie 2026",
+        }])
+        s = qb.QBittorrentProvider().statuses()["bb" + "0" * 38]
+        assert s.content_name == "www.UIndex.org - Scary Movie 2026"
+
+    def test_a_backend_without_content_paths_falls_back_to_the_name(
+        self, client, db_session, monkeypatch
+    ):
+        from miru.catalog import router as mod
+        from miru.acquisition.provider import DownloadStatus
+
+        w = _work(db_session, job="cc" + "0" * 38, ephemeral=True)
+        monkeypatch.setattr(mod, "pc_reachable", lambda: True)
+
+        class FakeDl:
+            def statuses(self):
+                return {"cc" + "0" * 38: DownloadStatus(
+                    id="cc" + "0" * 38, state="downloading", progress=0.4,
+                    name="Plain.mkv", downloaded_bytes=1, total_bytes=2,
+                    speed_bps=1, eta_seconds=None, error=None,
+                )}
+
+        monkeypatch.setattr(mod, "downloader", lambda: FakeDl())
+        client.get("/api/catalog/downloads")
+        db_session.refresh(w)
+        assert w.download_name == "Plain.mkv"
+
+
+class TestSearchGrabsGetTheSameLifecycle:
+    """"Even if I just clicked watch now it places it in the library."
+
+    The card path sets download_job_id and ephemeral on the work; the
+    SEARCH-page path (acquisition/download) submitted the torrent and walked
+    away — no link, no flag — so the poll's done-branch saw an ordinary
+    download and promoted the stream. The release the user clicked carries the
+    infohash, and ingest has already made a work for it: link them.
+    """
+
+    @pytest.fixture
+    def grabbing(self, client, db_session, monkeypatch):
+        import miru.acquisition.router as mod
+
+        class FakeDl:
+            def submit(self, magnet, sequential=False):
+                class J:
+                    id = "de" + "0" * 38
+                return J()
+
+        monkeypatch.setattr(mod, "downloader", lambda: FakeDl())
+        monkeypatch.setattr(mod, "supports_streaming", lambda: True)
+        return client
+
+    def _release(self, db, ih):
+        from miru.catalog.models import CatalogRelease
+
+        w = _work(db, "Scary Movie")
+        db.add(CatalogRelease(
+            info_hash=ih, indexer="Knaben", guid="g", title="Scary Movie 2026",
+            kind="movie", work_id=w.id, parsed_title="Scary Movie",
+            seeder_pct=0.5, seeders=5, leechers=0, size_bytes=1,
+            magnet=f"magnet:?xt=urn:btih:{ih}",
+        ))
+        db.commit()
+        return w
+
+    def test_a_search_watch_now_is_ephemeral(self, grabbing, db_session):
+        ih = "de" + "0" * 38
+        w = self._release(db_session, ih)
+        grabbing.post("/api/acquisition/download", json={
+            "result_id": f"magnet:?xt=urn:btih:{ih}", "info_hash": ih, "watch": True,
+        })
+        db_session.refresh(w)
+        assert w.download_job_id == ih
+        assert w.ephemeral is True
+
+    def test_a_search_download_is_a_keep(self, grabbing, db_session):
+        ih = "de" + "0" * 38
+        w = self._release(db_session, ih)
+        grabbing.post("/api/acquisition/download", json={
+            "result_id": f"magnet:?xt=urn:btih:{ih}", "info_hash": ih, "watch": False,
+        })
+        db_session.refresh(w)
+        assert w.ephemeral is False
+        assert w.download_job_id == ih
+
+    def test_a_result_the_catalogue_has_never_seen_still_downloads(
+        self, grabbing, db_session
+    ):
+        # No release row → nothing to link, and that must not break the grab.
+        res = grabbing.post("/api/acquisition/download", json={
+            "result_id": "magnet:?xt=urn:btih:" + "ff" + "0" * 38, "watch": True,
+        })
+        assert res.status_code == 200

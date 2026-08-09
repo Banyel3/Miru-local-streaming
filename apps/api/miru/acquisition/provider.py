@@ -88,6 +88,11 @@ class DownloadStatus:
     speed_bps: int = 0
     eta_seconds: int | None = None
     error: str | None = None
+    # The basename of the top-level entry the downloader actually wrote — NOT
+    # the torrent name; they differ (`www.UIndex.org - …` vs the clean title),
+    # and the ephemeral skip-list matched on the wrong one until a stream
+    # walked into the library.
+    content_name: str | None = None
 
 
 class AcquisitionProvider(Protocol):

@@ -228,3 +228,67 @@ class TestAShortReadIsAbortedNotEndedCleanly:
                                    retries=5, on_wait=late_append, chunk=25):
             got += block
         assert bytes(got) == b"a" * 30 + b"b" * 70
+
+
+class TestFindingTheFileTheDownloaderActuallyWrote:
+    """Scary Movie hit 100% downloaded and stayed 'waiting for the first
+    pieces to land'. The torrent unpacked into a folder named
+    `www.UIndex.org    -    Scary Movie…` — NOT the torrent's name — and
+    `_local_path` only ever tried `incoming/<filename>` flat and then
+    `incoming/<torrent name>/`. qBittorrent hands us the answer twice: `file`
+    is the relative path inside the save dir, and `content_path` names the
+    real folder. Use what the downloader says instead of guessing.
+    """
+
+    def _prefix(self, **kw):
+        return {
+            "info_hash": "0" * 40,
+            "name": "Scary Movie 2026 1080p WEBRip",
+            "file": "www.UIndex.org - Scary Movie 2026/Scary Movie 2026.mkv",
+            "content_path": "/mnt/incoming/www.UIndex.org - Scary Movie 2026",
+            **kw,
+        }
+
+    def test_the_relative_file_path_is_tried_as_given(self, tmp_path, monkeypatch):
+        from miru.streaming.partial import _local_path
+
+        monkeypatch.setattr("miru.streaming.partial.settings.incoming_path", str(tmp_path))
+        folder = tmp_path / "www.UIndex.org - Scary Movie 2026"
+        folder.mkdir()
+        f = folder / "Scary Movie 2026.mkv"
+        f.write_bytes(b"x")
+        assert _local_path(self._prefix()) == f
+
+    def test_the_content_path_folder_is_searched_when_names_disagree(
+        self, tmp_path, monkeypatch
+    ):
+        # `file` may be just the basename on some backends; content_path still
+        # names the real folder.
+        from miru.streaming.partial import _local_path
+
+        monkeypatch.setattr("miru.streaming.partial.settings.incoming_path", str(tmp_path))
+        folder = tmp_path / "www.UIndex.org - Scary Movie 2026"
+        folder.mkdir()
+        f = folder / "Scary Movie 2026.mkv"
+        f.write_bytes(b"x")
+        assert _local_path(self._prefix(file="Scary Movie 2026.mkv")) == f
+
+    def test_a_flat_single_file_torrent_still_resolves(self, tmp_path, monkeypatch):
+        from miru.streaming.partial import _local_path
+
+        monkeypatch.setattr("miru.streaming.partial.settings.incoming_path", str(tmp_path))
+        f = tmp_path / "Film.mkv"
+        f.write_bytes(b"x")
+        assert _local_path({"info_hash": "0" * 40, "name": "Film",
+                            "file": "Film.mkv", "content_path": "/mnt/incoming/Film.mkv"}) == f
+
+    def test_a_hostile_relative_path_cannot_escape_incoming(self, tmp_path, monkeypatch):
+        # `file` comes from another service; containment is not decoration.
+        from miru.streaming.partial import _local_path
+
+        monkeypatch.setattr("miru.streaming.partial.settings.incoming_path", str(tmp_path / "inc"))
+        (tmp_path / "inc").mkdir()
+        secret = tmp_path / "secret.mkv"
+        secret.write_bytes(b"x")
+        assert _local_path({"info_hash": "0" * 40, "name": "x",
+                            "file": "../secret.mkv", "content_path": "/x"}) is None

@@ -246,6 +246,11 @@ class QBittorrentProvider:
             # they have well-known causes — and "failed, error: None" told the
             # user nothing while a stale NFS mount held every download at 0%.
             error=_ERROR_CAUSE.get(t.get("state", "")),
+            content_name=(
+                t["content_path"].rstrip("/").rsplit("/", 1)[-1]
+                if t.get("content_path")
+                else None
+            ),
         )
 
     def cancel(self, job_id: str, delete_files: bool = False) -> None:

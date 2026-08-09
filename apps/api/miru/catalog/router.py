@@ -540,10 +540,15 @@ def downloads(db: Session = Depends(get_db)):
             out.append(_forgotten(w, "The downloader no longer has this torrent."))
             continue
 
-        # The filename the downloader wrote, learned once. The mover's
-        # skip-list for ephemeral streams is built from it.
-        if s.name and not w.download_name:
-            w.download_name = s.name
+        # The on-disk entry name, learned once — content_name, because the
+        # torrent name and the folder it unpacks into are different strings,
+        # and the skip-list matching the wrong one is how an ephemeral stream
+        # walked into the library. Committed immediately: the request session
+        # closes without a commit, so an uncommitted write here is silently
+        # rolled back — which left the skip-list empty on a second count.
+        if (s.content_name or s.name) and not w.download_name:
+            w.download_name = s.content_name or s.name
+            db.commit()
 
         # The moment a job reports done is the moment to promote it, rather than
         # letting it wait for the next periodic pass. Guarded so ten finishing

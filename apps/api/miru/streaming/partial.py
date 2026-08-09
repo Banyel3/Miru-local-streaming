@@ -187,32 +187,54 @@ def _local_path(prefix: dict) -> Path | None:
 
     The downloader runs on the PC and writes into the laptop's incoming
     directory over NFS, so the same bytes are readable here under a different
-    root. Only the filename is trusted from the downloader; the directory comes
-    from our own configuration, so a hostile or confused response cannot point
-    this at an arbitrary path.
+    root. The DOWNLOADER's answer is used, not a guess from the torrent name:
+    a torrent named `Scary Movie 2026…` unpacked into a folder named
+    `www.UIndex.org    -    Scary Movie 2026…`, and guessing the folder from
+    the name left a 100%-downloaded film "waiting for the first pieces to
+    land" forever. `file` is the path relative to the save dir; `content_path`
+    names the real top-level entry. Both are tried, then the old flat lookup.
+
+    Only relative paths are trusted from the downloader; the root comes from
+    our own configuration, so a hostile or confused response cannot point this
+    at an arbitrary path.
     """
     incoming = settings.incoming_path
     if not incoming:
         return None
-
-    name = Path(prefix.get("file") or prefix.get("name") or "").name
-    if not name:
-        return None
-
     root = Path(incoming).resolve()
-    candidate = (root / name).resolve()
-    # Containment check, not decoration: `file` comes from another service.
-    if root not in candidate.parents and candidate != root:
-        log.warning("refusing a live path outside incoming: %s", candidate)
-        return None
-    if candidate.exists():
-        return candidate
 
-    # Multi-file torrents land in a directory named after the torrent.
-    folder = (root / Path(prefix.get("name") or "").name).resolve()
-    if folder.is_dir() and (root in folder.parents):
-        for f in folder.rglob(name):
-            return f
+    def contained(p: Path) -> Path | None:
+        r = p.resolve()
+        return r if (root in r.parents or r == root) and r.exists() and r.is_file() else None
+
+    # 1. The relative path exactly as the downloader states it.
+    rel = (prefix.get("file") or "").lstrip("/")
+    if rel:
+        if got := contained(root / rel):
+            return got
+
+    # 2. The real on-disk entry, from content_path's basename — the torrent
+    #    name and the folder name are different strings.
+    content = Path(prefix.get("content_path") or "").name
+    fname = Path(rel or prefix.get("name") or "").name
+    if content:
+        entry = root / content
+        if got := contained(entry):
+            return got
+        if entry.resolve().is_dir() and root in entry.resolve().parents and fname:
+            for f in entry.rglob(fname):
+                if got := contained(f):
+                    return got
+
+    # 3. The old flat lookups, still valid for single-file torrents.
+    if fname:
+        if got := contained(root / fname):
+            return got
+    folder = root / Path(prefix.get("name") or "").name
+    if folder.resolve().is_dir() and root in folder.resolve().parents and fname:
+        for f in folder.rglob(fname):
+            if got := contained(f):
+                return got
     return None
 
 

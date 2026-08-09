@@ -13,6 +13,22 @@ from miru.catalog.classify import classify
 from miru.catalog.enrich import _loose
 from miru.catalog.ingest import ingest_search
 from miru.catalog.parse import parse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from miru.core.db import get_db
+
+
+def info_hash_of_magnet(target: str) -> str | None:
+    if not target.startswith("magnet:"):
+        return None
+    import urllib.parse as up
+
+    qs = up.parse_qs(up.urlparse(target).query)
+    for xt in qs.get("xt", []):
+        if xt.startswith("urn:btih:"):
+            return xt.split(":")[-1]
+    return None
 from miru.core.db import get_db
 
 log = logging.getLogger(__name__)
@@ -131,7 +147,7 @@ def search(
 
 
 @router.post("/download", response_model=dict)
-def download(grab: Grab):
+def download(grab: Grab, db: Session = Depends(get_db)):
     """Grab something straight from a live search.
 
     Goes through the configured downloader rather than Prowlarr's own, so a
@@ -156,6 +172,26 @@ def download(grab: Grab):
             job = dl.submit(target)
     except AcquisitionError as exc:
         raise HTTPException(502, str(exc)) from exc
+
+    # Give a search grab the same lifecycle as a card grab. Without this the
+    # work was never linked and never marked, so the poll's done-branch saw an
+    # ordinary download and promoted the stream — "even if I just clicked
+    # watch now it places it in the library". The release the user clicked
+    # carries the infohash; ingest has already made a work for it.
+    ih = (grab.info_hash or info_hash_of_magnet(target) or "").lower()
+    if ih:
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        work = db.execute(
+            select(CatalogWork).join(
+                CatalogRelease, CatalogRelease.work_id == CatalogWork.id
+            ).where(CatalogRelease.info_hash == ih)
+        ).scalars().first()
+        if work is not None:
+            work.download_job_id = job.id
+            work.ephemeral = grab.watch
+            db.commit()
+
     return {"job_id": job.id, "streaming": supports_streaming()}
 
 
