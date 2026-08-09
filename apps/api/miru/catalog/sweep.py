@@ -106,6 +106,56 @@ def names_for(db: Session, work: CatalogWork) -> list[str]:
     return names
 
 
+def completion_candidates(db: Session, limit: int = 8) -> list[CatalogWork]:
+    """The hidden works most worth asking about, stalest first.
+
+    The strict wall hides fragments and unknown-count anime, and the card-open
+    sweep only fires on open — nobody opens what nobody sees, so without this
+    the wall stays thin forever. Selection mirrors the wall's own rule
+    (rails._ANIME_COMPLETE) inverted: anything the wall would hide for
+    coverage reasons is a candidate. Never-swept works come first — nothing is
+    known about them — then the least recently swept.
+    """
+    from sqlalchemy import case as sa_case
+
+    denom = sa_case(
+        (CatalogWork.release_status == "RELEASING", CatalogWork.episodes_aired),
+        else_=CatalogWork.episode_count,
+    )
+    incomplete = (
+        denom.is_(None) | (denom <= 0) | (CatalogWork.episodes_covered < denom)
+    )
+    return list(
+        db.execute(
+            sa_select(CatalogWork)
+            .where(
+                CatalogWork.kind == "anime",
+                (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE"),
+                CatalogWork.release_count > 0,
+                CatalogWork.adult.is_(False),
+                incomplete,
+            )
+            .order_by(CatalogWork.swept_at.asc().nullsfirst())
+            .limit(limit)
+        ).scalars()
+    )
+
+
+def sweep_for_completion(db: Session, limit: int = 8) -> int:
+    """One background pass: sweep the works the wall is hiding. Returns swept.
+
+    Bounded — `limit` works × ≤6 searches — and self-debouncing through
+    `sweep()`'s own 24 h per-work window, so a work with no packs anywhere is
+    asked once a day, not once a tick.
+    """
+    n = 0
+    for work in completion_candidates(db, limit):
+        if sweep(db, work):
+            n += 1
+        db.commit()
+    return n
+
+
 def sweep(db: Session, work: CatalogWork) -> int:
     """Look for complete packs of this show. Returns how many results were seen.
 

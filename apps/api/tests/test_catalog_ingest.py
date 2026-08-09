@@ -338,3 +338,70 @@ class TestRestatingIsOnePassNotOnePerWork:
         # The stale release's better percentile must not win.
         assert keep.best_seeder_pct == pytest.approx(0.4)
         assert db_session.get(CatalogWork, ghost.id) is None
+
+
+class TestCoverageIsTheUnionOfWhatTheReleasesSpan:
+    def _rel(self, db, work, ih, ep, end=None):
+        from miru.catalog.models import CatalogRelease
+
+        db.add(CatalogRelease(
+            info_hash=ih, indexer="n", guid=ih, title=f"X {ep}", kind="anime",
+            work_id=work.id, parsed_title="X", episode=ep, episode_end=end,
+            seeder_pct=0.5, seeders=5, leechers=0, size_bytes=1, magnet="magnet:?x",
+        ))
+
+    def test_overlapping_spans_count_each_episode_once(self, db_session):
+        """The wall's completeness test divides by this number.
+
+        Twenty encodings of episode 6 are one episode, and a 1-12 batch plus a
+        10-14 batch is fourteen episodes, not seventeen — double-counting would
+        call a fragment complete, which is the exact lie the strict wall exists
+        to remove.
+        """
+        from miru.catalog.ingest import _restate_works
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="x", display_title="X")
+        db_session.add(w)
+        db_session.flush()
+        self._rel(db_session, w, "1" * 40, 1, 12)
+        self._rel(db_session, w, "2" * 40, 5)
+        self._rel(db_session, w, "3" * 40, 10, 14)
+        self._rel(db_session, w, "4" * 40, 5)  # a second encoding of ep 5
+        db_session.commit()
+
+        _restate_works(db_session)
+        db_session.commit()
+        assert w.episodes_covered == 14
+
+    def test_a_release_with_no_episode_number_adds_nothing(self, db_session):
+        from miru.catalog.ingest import _restate_works
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="y", display_title="Y")
+        db_session.add(w)
+        db_session.flush()
+        db_session.add(CatalogRelease(
+            info_hash="5" * 40, indexer="n", guid="g5", title="Y raw", kind="anime",
+            work_id=w.id, parsed_title="Y", seeder_pct=0.5, seeders=5, leechers=0,
+            size_bytes=1, magnet="magnet:?x",
+        ))
+        db_session.commit()
+        _restate_works(db_session)
+        db_session.commit()
+        assert w.episodes_covered == 0
+
+    def test_an_absurd_span_is_clamped_not_materialised(self, db_session):
+        # A parser accident like ep=1 end=999999 must not allocate a
+        # million-entry set per refresh pass.
+        from miru.catalog.ingest import _restate_works
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="z", display_title="Z")
+        db_session.add(w)
+        db_session.flush()
+        self._rel(db_session, w, "6" * 40, 1, 999999)
+        db_session.commit()
+        _restate_works(db_session)
+        db_session.commit()
+        assert 0 < w.episodes_covered <= 2001

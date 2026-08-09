@@ -15,9 +15,14 @@ from miru.catalog.rails import RAILS, _base
 
 
 def _w(db, title, fmt, kind="anime"):
+    # Complete by default (12 of 12, finished): the strict anime wall hides
+    # unknown-count shows, and these tests are about the FORMAT split — they
+    # must not start failing for a rule they are not testing. The strict rule
+    # has its own class below.
     w = CatalogWork(
         kind=kind, normalised_title=title.casefold(), display_title=title,
         format=fmt, release_count=3, best_seeder_pct=50.0,
+        episode_count=12, episodes_covered=12, release_status="FINISHED",
     )
     db.add(w)
     db.commit()
@@ -54,8 +59,9 @@ class TestFilmsHaveTheirOwnRowInsideAnime:
         assert [w.id for w in got] == [show.id]
 
     def test_a_work_with_no_format_yet_is_treated_as_a_series(self, db_session):
-        # Unresolved works have no format. Guessing "film" would put every
-        # unresolved card in a row labelled Films.
+        # No FORMAT is not no COUNT: this pins the format routing, so the work
+        # is complete and only its format is missing. Guessing "film" would put
+        # every such card in a row labelled Films.
         w = _w(db_session, "Not Resolved", None)
         got = db_session.execute(_base("anime", rail="latest")).scalars().all()
         assert [x.id for x in got] == [w.id]
@@ -90,9 +96,10 @@ class TestAnimeSeriesAndAnimeMoviesAreTheirOwnWalls:
         got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
         assert [w.id for w in got] == [show.id]
 
-    def test_an_unresolved_anime_counts_as_a_series(self, db_session):
-        # No provider answer means no format. The wall must not hide it — and
-        # "series" is where a weekly show lands, which is what most anime is.
+    def test_a_formatless_but_complete_anime_lands_with_the_series(self, db_session):
+        # Format routing only: complete but no format goes to anime-series,
+        # never to Films. (A COUNTLESS work is hidden by the strict rule — that
+        # case is pinned in TestTheAnimeWallShowsOnlyCompleteCards.)
         w = _w(db_session, "Unresolved", None)
         got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
         assert [x.id for x in got] == [w.id]
@@ -108,3 +115,77 @@ class TestAnimeSeriesAndAnimeMoviesAreTheirOwnWalls:
 
         assert "films" not in {r.key for r in rails_for("anime-series")}
         assert "films" not in {r.key for r in rails_for("anime-movies")}
+
+
+def _anime(db, title, *, covered=0, count=None, aired=None, status=None, fmt="TV"):
+    w = CatalogWork(
+        kind="anime", normalised_title=title.casefold(), display_title=title,
+        format=fmt, release_count=3, best_seeder_pct=50.0,
+        episodes_covered=covered, episode_count=count, episodes_aired=aired,
+        release_status=status,
+    )
+    db.add(w)
+    db.commit()
+    return w
+
+
+class TestTheAnimeWallShowsOnlyCompleteCards:
+    """The user's call, second ask: strict. A finished show is on the wall only
+    with every episode of its run; an airing one only with everything aired so
+    far; an unknown-count show not at all. Films are complete by nature. Search
+    still returns everything — the wall is the only thing being strict.
+    """
+
+    def test_a_complete_finished_show_is_on_the_wall(self, db_session):
+        w = _anime(db_session, "Naruto", covered=500, count=500, status="FINISHED")
+        got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [w.id]
+
+    def test_a_fragment_is_not(self, db_session):
+        _anime(db_session, "Daemons", covered=6, count=24, status="FINISHED")
+        assert db_session.execute(_base("anime-series", rail="latest")).scalars().all() == []
+
+    def test_an_airing_show_holding_everything_aired_counts_as_complete(self, db_session):
+        w = _anime(db_session, "Weekly", covered=6, count=None, aired=6, status="RELEASING")
+        got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [w.id]
+
+    def test_an_airing_show_missing_aired_episodes_is_a_fragment(self, db_session):
+        _anime(db_session, "Behind", covered=1, aired=18, status="RELEASING")
+        assert db_session.execute(_base("anime-series", rail="latest")).scalars().all() == []
+
+    def test_an_unknown_count_show_is_off_the_wall(self, db_session):
+        # 175 of 303 today. The user chose strict knowing the wall thins; the
+        # background sweep and the half-hourly enrichment are the way back on.
+        _anime(db_session, "Unresolved", covered=9)
+        assert db_session.execute(_base("anime-series", rail="latest")).scalars().all() == []
+
+    def test_a_merged_season_card_is_complete_by_the_providers_count(self, db_session):
+        # Frieren: S2 merged onto the S1 card — covered 38, provider count 28.
+        # The provider's denominator is the test, deliberately lenient, so a
+        # flagship complete card is not hidden over a season the provider
+        # record does not describe.
+        w = _anime(db_session, "Frieren", covered=38, count=28, status="FINISHED")
+        got = db_session.execute(_base("anime-series", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [w.id]
+
+    def test_an_anime_film_needs_no_episode_arithmetic(self, db_session):
+        w = _anime(db_session, "Your Name", fmt="MOVIE")
+        got = db_session.execute(_base("anime-movies", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [w.id]
+
+    def test_anime_rows_inside_the_all_wall_obey_the_same_rule(self, db_session):
+        _anime(db_session, "Fragment", covered=2, count=24, status="FINISHED")
+        film = _w(db_session, "Monay", "MOVIE", kind="movie")
+        got = db_session.execute(_base("all", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [film.id]
+
+    def test_the_live_action_walls_are_untouched(self, db_session):
+        # No wired provider gives live-action episode counts; hiding by a
+        # denominator we do not have would empty the Series wall.
+        s = CatalogWork(kind="series", normalised_title="pb", display_title="Power Book",
+                        release_count=3, best_seeder_pct=1.0)
+        db_session.add(s)
+        db_session.commit()
+        got = db_session.execute(_base("series", rail="latest")).scalars().all()
+        assert [x.id for x in got] == [s.id]

@@ -107,6 +107,17 @@ def _work_json(w: CatalogWork) -> dict:
         # The provider's episode count against the releases actually held: the
         # honest "8 of 1,172" rather than 1,164 dead rows.
         "episode_count": w.episode_count,
+        # The wall's completeness verdict, so cards and search results can say
+        # "Complete" or "6 of 24". None = no denominator known.
+        "episodes_covered": w.episodes_covered or 0,
+        "episodes_expected": (
+            w.episodes_aired if w.release_status == "RELEASING" else w.episode_count
+        ),
+        "complete": (
+            None
+            if not (exp := (w.episodes_aired if w.release_status == "RELEASING" else w.episode_count))
+            else (w.episodes_covered or 0) >= exp
+        ),
         # Our own path, not the provider's. The browser makes no third-party
         # requests, and a miss 404s so the client can fall back to ArtTile.
         "poster_url": f"/api/posters/{w.id}" if w.poster_url else None,

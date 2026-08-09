@@ -237,3 +237,63 @@ class TestTheSheetKnowsASweepIsComing:
         w.swept_at = datetime.now(timezone.utc)
         db_session.commit()
         assert client.get(f"/api/catalog/works/{w.id}").json()["sweep_started"] is False
+
+
+class TestHiddenFragmentsStillGetTheirSweep:
+    """The strict wall hides fragments — and the card-open sweep only fires on
+    open, so nobody opens what nobody sees and the wall would stay thin
+    forever. A bounded background pass is their way on: each scheduler tick
+    sweeps the least-recently-swept incomplete or unknown-count anime works.
+    """
+
+    def _mk(self, db, title, *, covered=0, count=None, status=None, swept=None,
+            kind="anime", releases=1):
+        w = CatalogWork(
+            kind=kind, normalised_title=title.casefold(), display_title=title,
+            release_count=releases, episodes_covered=covered, episode_count=count,
+            release_status=status, swept_at=swept,
+        )
+        db.add(w)
+        db.commit()
+        return w
+
+    def test_incomplete_and_unknown_works_are_selected_oldest_first(self, db_session):
+        from datetime import datetime, timedelta, timezone
+
+        old = datetime.now(timezone.utc) - timedelta(days=3)
+        older = datetime.now(timezone.utc) - timedelta(days=9)
+        frag_old = self._mk(db_session, "Frag Old", covered=2, count=24,
+                            status="FINISHED", swept=older)
+        frag_new = self._mk(db_session, "Frag New", covered=2, count=24,
+                            status="FINISHED", swept=old)
+        unknown = self._mk(db_session, "Unknown", covered=5)
+        got = sweep_mod.completion_candidates(db_session, limit=8)
+        titles = [w.display_title for w in got]
+        # Never-swept first (nothing known), then the stalest.
+        assert titles.index("Unknown") < titles.index("Frag Old") < titles.index("Frag New")
+
+    def test_a_complete_work_is_never_selected(self, db_session):
+        self._mk(db_session, "Done", covered=24, count=24, status="FINISHED")
+        assert sweep_mod.completion_candidates(db_session, limit=8) == []
+
+    def test_an_airing_show_holding_everything_aired_is_not_selected(self, db_session):
+        w = self._mk(db_session, "Weekly", covered=6, status="RELEASING")
+        w.episodes_aired = 6
+        db_session.commit()
+        assert sweep_mod.completion_candidates(db_session, limit=8) == []
+
+    def test_the_batch_is_bounded(self, db_session):
+        for i in range(20):
+            self._mk(db_session, f"F{i}", covered=1, count=24, status="FINISHED")
+        assert len(sweep_mod.completion_candidates(db_session, limit=8)) == 8
+
+    def test_films_and_live_action_are_not_its_business(self, db_session):
+        self._mk(db_session, "A Film", kind="movie")
+        self._mk(db_session, "Live Action", kind="series")
+        assert sweep_mod.completion_candidates(db_session, limit=8) == []
+
+    def test_a_work_with_no_releases_is_skipped(self, db_session):
+        # Nothing to complete; its releases moved elsewhere and _restate will
+        # delete it.
+        self._mk(db_session, "Ghost", covered=0, count=24, status="FINISHED", releases=0)
+        assert sweep_mod.completion_candidates(db_session, limit=8) == []

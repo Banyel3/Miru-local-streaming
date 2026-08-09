@@ -169,3 +169,6 @@ def apply(work: CatalogWork, data: dict) -> None:
     work.genres = data.get("genres") or work.genres or []
     work.format = data.get("format") or work.format
     work.episode_count = data.get("episode_count") or work.episode_count
+    work.release_status = data.get("release_status") or work.release_status
+    if data.get("episodes_aired") is not None:
+        work.episodes_aired = data["episodes_aired"]

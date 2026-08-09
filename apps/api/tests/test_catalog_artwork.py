@@ -243,3 +243,51 @@ class TestRemuxStaysOnTheLaptop:
 
         assert "remux" not in NEEDS_WORKER
         assert availability("remux")[0] == "available"
+
+
+class TestAniListSaysTheShapeOfTheRun:
+    """The wall cannot tell a complete show from a fragment without a
+    denominator. AniList gives both halves: `episodes` for a finished run, and
+    `nextAiringEpisode` for how much of an airing one exists yet — the field
+    Jikan/MAL cannot provide (checked live: One Piece answers episodes=None
+    there). No new provider; the query we already run says it.
+    """
+
+    def _media(self, **kw):
+        base = {
+            "id": 1, "title": {"romaji": "Show"}, "format": "TV",
+            "startDate": {"year": 2023},
+        }
+        return {"data": {"Media": {**base, **kw}}}
+
+    def test_a_finished_show_reports_its_status(self, monkeypatch):
+        monkeypatch.setattr(
+            enrich, "_get",
+            lambda *a, **k: self._media(status="FINISHED", episodes=28),
+        )
+        got = enrich._anilist("Show")
+        assert got["release_status"] == "FINISHED"
+        assert got["episode_count"] == 28
+        assert got["episodes_aired"] is None
+
+    def test_an_airing_show_reports_how_much_exists(self, monkeypatch):
+        # nextAiringEpisode is the NEXT one, so aired-so-far is one less.
+        monkeypatch.setattr(
+            enrich, "_get",
+            lambda *a, **k: self._media(
+                status="RELEASING", episodes=None,
+                nextAiringEpisode={"episode": 7},
+            ),
+        )
+        got = enrich._anilist("Show")
+        assert got["release_status"] == "RELEASING"
+        assert got["episodes_aired"] == 6
+
+    def test_an_airing_show_between_schedules_reports_nothing_not_zero(self, monkeypatch):
+        # A show on hiatus has no nextAiringEpisode. Zero would mean "nothing
+        # has aired", which would hide a show someone holds completely.
+        monkeypatch.setattr(
+            enrich, "_get",
+            lambda *a, **k: self._media(status="RELEASING", episodes=None),
+        )
+        assert enrich._anilist("Show")["episodes_aired"] is None

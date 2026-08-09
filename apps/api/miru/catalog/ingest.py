@@ -213,6 +213,21 @@ def _restate_works(db: Session, only: set[int] | None = None) -> None:
         agg = agg.where(CatalogRelease.work_id.in_(only))
     stats = {row.work_id: row for row in db.execute(agg)}
 
+    # Coverage: the union of the episodes the releases actually span. Twenty
+    # encodings of episode 6 are one episode, and overlapping batches count
+    # each episode once — double-counting would call a fragment complete, the
+    # exact lie the strict anime wall exists to remove. One round trip; spans
+    # clamped so a parser accident cannot materialise a million-entry set.
+    span_q = select(
+        CatalogRelease.work_id, CatalogRelease.episode, CatalogRelease.episode_end
+    ).where(CatalogRelease.episode.isnot(None))
+    if only is not None:
+        span_q = span_q.where(CatalogRelease.work_id.in_(only))
+    covered: dict[int, set[int]] = {}
+    for wid, ep, end in db.execute(span_q):
+        span = covered.setdefault(wid, set())
+        span.update(range(ep, min(end or ep, ep + 2000) + 1))
+
     q = select(CatalogWork)
     if only is not None:
         q = q.where(CatalogWork.id.in_(only))
@@ -228,6 +243,7 @@ def _restate_works(db: Session, only: set[int] | None = None) -> None:
         work.release_count = row.n if row else 0
         work.best_seeder_pct = (row.best if row else None) or 0.0
         work.latest_release_at = (row.latest if row else None) or work.first_seen_at
+        work.episodes_covered = len(covered.get(work.id, ()))
 
 
 def _ingest(

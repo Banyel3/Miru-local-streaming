@@ -43,7 +43,32 @@ def filled(db_session):
         for i in range(3)
     ]
     refresh(db_session, FakeProvider([anime + movies + tv]))
+    # The strict anime wall hides unknown-count shows, and every test in this
+    # file is about wall MECHANICS — paging, dedupe, the picker — not the
+    # strict rule (pinned in test_anime_films_rail.py). Mark the anime works
+    # complete so the mechanics stay observable.
+    from miru.catalog.models import CatalogWork
+
+    for w in db_session.query(CatalogWork).filter(CatalogWork.kind == "anime"):
+        w.episode_count = 1
+        w.episodes_covered = 1
+        w.release_status = "FINISHED"
+    db_session.commit()
     return db_session
+
+
+
+
+def _make_visible(db):
+    """The strict anime wall hides unknown-count shows; these tests are about
+    the picker, so their work is marked complete to stay on the wall."""
+    from miru.catalog.models import CatalogWork
+
+    for w in db.query(CatalogWork).filter(CatalogWork.kind == "anime"):
+        w.episode_count = 1
+        w.episodes_covered = 1
+        w.release_status = "FINISHED"
+    db.commit()
 
 
 class TestTheWall:
@@ -139,6 +164,7 @@ class TestTheReleasePicker:
         refresh(db_session, FakeProvider([[
             result("[Grp] Show - 01 [1080p][x265][10bit]", "Nyaa.si", 90, NYAA_CATS),
         ]]))
+        _make_visible(db_session)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         rel = client.get(f"/api/catalog/works/{wid}").json()["releases"][0]
         assert rel["needs_pc"] is True
@@ -147,6 +173,7 @@ class TestTheReleasePicker:
         refresh(db_session, FakeProvider([[
             result("[Grp] Show - 01 [1080p][x264]", "Nyaa.si", 1, NYAA_CATS),
         ]]))
+        _make_visible(db_session)
         wid = client.get("/api/catalog").json()["rails"][0]["items"][0]["id"]
         assert client.get(f"/api/catalog/works/{wid}").json()["all_dead"] is True
 
@@ -349,3 +376,35 @@ class TestTheSheetKnowsWhatIsOnDisk:
         ))
         db_session.commit()
         assert client.get(f"/api/catalog/works/{w.id}").json()["owned_episodes"] == []
+
+
+class TestTheCardSaysWhatItHolds:
+    def test_the_item_payload_carries_the_coverage_verdict(self, client, db_session):
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="f", display_title="F",
+                        release_count=3, best_seeder_pct=9.0, episode_count=24,
+                        episodes_covered=24, release_status="FINISHED")
+        db_session.add(w)
+        db_session.commit()
+        item = next(
+            x for r in client.get("/api/catalog?kind=anime-series").json()["rails"]
+            for x in r["items"] if x["id"] == w.id
+        )
+        assert item["complete"] is True
+        assert item["episodes_covered"] == 24
+        assert item["episodes_expected"] == 24
+
+    def test_an_unknown_denominator_is_none_not_false(self, client, db_session):
+        # False would render "incomplete" on a show nobody has counted.
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="series", normalised_title="u", display_title="U",
+                        release_count=1, best_seeder_pct=1.0)
+        db_session.add(w)
+        db_session.commit()
+        item = next(
+            x for r in client.get("/api/catalog?kind=series").json()["rails"]
+            for x in r["items"] if x["id"] == w.id
+        )
+        assert item["complete"] is None

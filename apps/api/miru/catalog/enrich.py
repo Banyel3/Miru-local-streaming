@@ -111,6 +111,8 @@ def _anilist(title: str) -> dict | None:
       Media(search: $s, type: ANIME) {
         id
         isAdult
+        status
+        nextAiringEpisode { episode }
         format
         episodes
         title { romaji english native }
@@ -159,6 +161,17 @@ def _anilist(title: str) -> dict | None:
         # weekly show with this rather than with another filter pill.
         "format": m.get("format"),
         "episode_count": m.get("episodes"),
+        # The shape of the run, for the complete-only wall. `status` says
+        # whether the run is finished; nextAiringEpisode says how much of an
+        # airing one exists yet — its NUMBER is the next episode, so aired is
+        # one less. Absent (hiatus, finished) means unknown, never zero: zero
+        # would read as "nothing aired" and hide a fully-held show.
+        "release_status": m.get("status"),
+        "episodes_aired": (
+            m["nextAiringEpisode"]["episode"] - 1
+            if m.get("nextAiringEpisode") and m["nextAiringEpisode"].get("episode")
+            else None
+        ),
     }
 
 

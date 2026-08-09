@@ -18,7 +18,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, and_, case, or_, select
 from sqlalchemy.orm import Session
 
 from miru.catalog.models import CatalogWork
@@ -99,6 +99,22 @@ def decode_cursor(cursor: str | None) -> tuple[str, int] | None:
 _IS_FILM = CatalogWork.format == "MOVIE"
 _IS_NOT_FILM = (CatalogWork.format.is_(None)) | (CatalogWork.format != "MOVIE")
 
+# The strict anime wall (user's call, 2026-08-09): anime rails show only
+# complete cards. The denominator is the provider's — episode_count for a
+# finished run, aired-so-far for an airing one — and deliberately not the
+# highest episode seen, so a merged-season card (Frieren: covered 38, S1 count
+# 28) is not hidden over a season the provider record does not describe. A film
+# needs no episode arithmetic. Unknown-count shows are off the wall; the
+# background completion sweep and the half-hourly enrichment are their way on.
+_DENOM = case(
+    (CatalogWork.release_status == "RELEASING", CatalogWork.episodes_aired),
+    else_=CatalogWork.episode_count,
+)
+_ANIME_COMPLETE = or_(
+    _IS_FILM,
+    and_(_DENOM.isnot(None), _DENOM > 0, CatalogWork.episodes_covered >= _DENOM),
+)
+
 
 def _base(kind: str | None, rail: str | None = None) -> Select:
     # Adult titles never reach a rail. The provider says so — AniList
@@ -115,10 +131,15 @@ def _base(kind: str | None, rail: str | None = None) -> Select:
     if kind == "anime-movies":
         return q.where(CatalogWork.kind == "anime", _IS_FILM)
     if kind == "anime-series":
-        return q.where(CatalogWork.kind == "anime", _IS_NOT_FILM)
+        return q.where(CatalogWork.kind == "anime", _IS_NOT_FILM, _ANIME_COMPLETE)
+    if kind == "all":
+        # Anime rows obey the strict rule wherever they appear.
+        return q.where(or_(CatalogWork.kind != "anime", _ANIME_COMPLETE))
 
     if kind and kind != "all":
         q = q.where(CatalogWork.kind == kind)
+        if kind == "anime":
+            q = q.where(_ANIME_COMPLETE)
 
     # Only the mixed anime wall splits on format per rail: a live-action film
     # already has its own kind, and filtering the Movies wall by MOVIE would

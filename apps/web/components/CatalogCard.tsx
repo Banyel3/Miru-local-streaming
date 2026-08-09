@@ -85,9 +85,19 @@ export function CatalogCard({
       ) : (
         work.year && <MicroChip>{work.year}</MicroChip>
       )}
-      <MicroChip tone={work.release_count > 1 ? "bright" : "muted"}>
-        {work.release_count} rel
-      </MicroChip>
+      {/* The strict wall means an anime card here IS complete — say so.
+          Elsewhere (search can surface fragments) the honest count shows. */}
+      {work.complete === true ? (
+        <MicroChip tone="bright">Complete ✓</MicroChip>
+      ) : work.complete === false && work.episodes_expected ? (
+        <MicroChip tone="muted">
+          {work.episodes_covered ?? 0} of {work.episodes_expected}
+        </MicroChip>
+      ) : (
+        <MicroChip tone={work.release_count > 1 ? "bright" : "muted"}>
+          {work.release_count} rel
+        </MicroChip>
+      )}
     </div>
   );
 

@@ -326,6 +326,13 @@ export type CatalogWork = {
   /** The provider's episode count. Only ever used to say "8 of 1,172" — the
    *  catalogue holds the 8, so the other 1,164 are never rendered as rows. */
   episode_count: number | null;
+  /** How many distinct episodes the releases actually span (batches counted
+   *  once), what the run should hold, and the wall's verdict. `complete` is
+   *  null when no denominator is known — not false, which would render
+   *  "incomplete" on a show nobody has counted. */
+  episodes_covered?: number;
+  episodes_expected?: number | null;
+  complete?: boolean | null;
   poster_url: string | null;
   overview: string | null;
   score: number | null;

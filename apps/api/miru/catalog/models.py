@@ -121,6 +121,14 @@ class CatalogWork(Base):
     last_streamed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The shape of the run, from AniList, for the complete-only anime wall:
+    # FINISHED runs are judged against episode_count, RELEASING ones against
+    # episodes_aired (nextAiringEpisode - 1). episodes_covered is ours — the
+    # union of the episodes the releases actually span, kept current by
+    # _restate_works.
+    release_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    episodes_aired: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episodes_covered: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # AniList's own word: TV | MOVIE | OVA | ONA | SPECIAL. This is what tells a
     # film from a weekly show inside the anime rail — *One Piece Film: Red* is

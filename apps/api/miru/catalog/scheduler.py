@@ -83,6 +83,12 @@ async def _loop(interval: float) -> None:
                 await asyncio.to_thread(_sweep_ephemeral_once)
             except Exception:  # noqa: BLE001
                 log.exception("ephemeral sweep raised")
+            # The strict wall's other half: hidden fragments cannot earn the
+            # card-open sweep, so a bounded pass asks about the stalest few.
+            try:
+                await asyncio.to_thread(_sweep_completion_once)
+            except Exception:  # noqa: BLE001
+                log.exception("completion sweep raised")
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad pass must not kill the loop
@@ -97,6 +103,17 @@ def _sweep_ephemeral_once() -> None:
     db = SessionLocal()
     try:
         sweep_ephemeral(db)
+    finally:
+        db.close()
+
+
+def _sweep_completion_once() -> None:
+    from miru.catalog.sweep import sweep_for_completion
+    from miru.core.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sweep_for_completion(db)
     finally:
         db.close()
 

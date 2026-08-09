@@ -52,8 +52,11 @@ class TestTheProviderIsAsked:
 
 
 class TestItNeverReachesTheWall:
-    def _w(self, db, title, adult):
-        w = CatalogWork(kind="anime", normalised_title=title.casefold(), display_title=title,
+    def _w(self, db, title, adult, kind="series"):
+        # kind=series: these tests pin the ADULT filter alone, and the strict
+        # anime wall (episode-count based) would hide countless anime rows for
+        # its own reason, shadowing the thing under test.
+        w = CatalogWork(kind=kind, normalised_title=title.casefold(), display_title=title,
                         release_count=3, best_seeder_pct=50.0, adult=adult)
         db.add(w)
         db.commit()
@@ -62,24 +65,24 @@ class TestItNeverReachesTheWall:
     def test_an_adult_work_is_not_on_any_rail(self, db_session):
         self._w(db_session, "Ingoku Danchi", True)
         keep = self._w(db_session, "Frieren", False)
-        for rail in ("latest", "trending", "films"):
-            got = db_session.execute(_base("anime", rail=rail)).scalars().all()
+        for rail in ("latest", "trending"):
+            got = db_session.execute(_base("series", rail=rail)).scalars().all()
             assert all(w.id != 1 or w.id == keep.id for w in got)
             assert "Ingoku" not in " ".join(w.display_title for w in got), rail
 
     def test_an_ordinary_work_is_unaffected(self, db_session):
         keep = self._w(db_session, "Frieren", False)
-        got = db_session.execute(_base("anime", rail="latest")).scalars().all()
+        got = db_session.execute(_base("series", rail="latest")).scalars().all()
         assert [w.id for w in got] == [keep.id]
 
     def test_a_work_nobody_has_resolved_is_still_shown(self, db_session):
         # `adult` is unknown for an unresolved work. Hiding those would empty
         # the wall of everything the providers have not answered about yet.
-        w = CatalogWork(kind="anime", normalised_title="unknown", display_title="Unknown",
+        w = CatalogWork(kind="series", normalised_title="unknown", display_title="Unknown",
                         release_count=1, best_seeder_pct=1.0)
         db_session.add(w)
         db_session.commit()
-        got = db_session.execute(_base("anime", rail="latest")).scalars().all()
+        got = db_session.execute(_base("series", rail="latest")).scalars().all()
         assert [x.id for x in got] == [w.id]
 
     def test_the_movies_wall_hides_them_too(self, db_session):
