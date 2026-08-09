@@ -108,14 +108,20 @@ def _work_json(w: CatalogWork) -> dict:
         # honest "8 of 1,172" rather than 1,164 dead rows.
         "episode_count": w.episode_count,
         # The wall's completeness verdict, so cards and search results can say
-        # "Complete" or "6 of 24". None = no denominator known.
+        # "Complete" or "6 of 24". None = no denominator known — and films are
+        # always None: AniList counts a film as one episode while film releases
+        # carry no episode number, so every film read "0 of 1". A film has no
+        # episodes to do arithmetic on.
         "episodes_covered": w.episodes_covered or 0,
         "episodes_expected": (
-            w.episodes_aired if w.release_status == "RELEASING" else w.episode_count
+            None
+            if w.format == "MOVIE"
+            else (w.episodes_aired if w.release_status == "RELEASING" else w.episode_count)
         ),
         "complete": (
             None
-            if not (exp := (w.episodes_aired if w.release_status == "RELEASING" else w.episode_count))
+            if w.format == "MOVIE"
+            or not (exp := (w.episodes_aired if w.release_status == "RELEASING" else w.episode_count))
             else (w.episodes_covered or 0) >= exp
         ),
         # Our own path, not the provider's. The browser makes no third-party

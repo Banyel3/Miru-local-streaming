@@ -54,11 +54,13 @@ ALLOWED_IMAGE_HOSTS = {
 }
 
 
-# AniList's published limit is 90 requests a minute, and it answers 429 for the
-# rest of the minute once you pass it — so the pass that trips it enriches
-# nothing. One gate for all three sources rather than a limit each: TMDB would
-# tolerate far more, and nothing here is fast enough for that to matter.
-_MIN_INTERVAL = 60 / 75
+# AniList's DOCUMENTED limit is 90 requests a minute — and its ENFORCED one is
+# 30/min, the "temporary" degraded state it has run in since 2023. Measured
+# here on 2026-08-09: a backfill paced at 75/min drew a steady stream of 429s.
+# Paced for the real limit with headroom, not the published one. One gate for
+# all three sources rather than a limit each: TMDB would tolerate far more, and
+# nothing here is fast enough for that to matter.
+_MIN_INTERVAL = 60 / 28
 _lock = threading.Lock()
 _last_call = 0.0
 

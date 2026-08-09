@@ -408,3 +408,22 @@ class TestTheCardSaysWhatItHolds:
             for x in r["items"] if x["id"] == w.id
         )
         assert item["complete"] is None
+
+    def test_a_film_gets_no_episode_verdict_at_all(self, client, db_session):
+        # AniList says a film has 1 episode and film releases carry no episode
+        # number, so every film read "0 of 1" — incomplete arithmetic on a
+        # thing that has no episodes. A film with a release IS complete;
+        # the chip falls back to the release count.
+        from miru.catalog.models import CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="yn", display_title="Your Name",
+                        format="MOVIE", release_count=2, best_seeder_pct=5.0,
+                        episode_count=1, episodes_covered=0)
+        db_session.add(w)
+        db_session.commit()
+        item = next(
+            x for r in client.get("/api/catalog?kind=anime-movies").json()["rails"]
+            for x in r["items"] if x["id"] == w.id
+        )
+        assert item["complete"] is None
+        assert item["episodes_expected"] is None
