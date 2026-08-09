@@ -113,3 +113,22 @@ export function threeChoices(releases: CatalogRelease[]): WorkDetail["choices"] 
     best_quality: least(pool, (r) => [rankIn(DESCENDING, r.quality), -r.seeders]),
   };
 }
+
+/** An episode already in the library, as the work payload reports it. */
+export type OwnedEpisode = { episode: number; episode_end: number | null; file_id: number };
+
+/**
+ * The library file behind a row, or null.
+ *
+ * Exact scope match on purpose: owning episode 5 is not owning the 1-12 batch
+ * — marking the batch owned would hide the very download that completes the
+ * series, and a wrong "you have this" is worse than a redundant offer.
+ */
+export function ownedFileFor(group: Group, owned: OwnedEpisode[]): number | null {
+  if (group.kind === "unsorted") return null;
+  const r = group.releases[0];
+  const hit = owned.find(
+    (o) => o.episode === r.episode && (o.episode_end ?? null) === (r.episode_end ?? null),
+  );
+  return hit?.file_id ?? null;
+}

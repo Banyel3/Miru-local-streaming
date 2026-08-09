@@ -391,6 +391,9 @@ export type WorkDetail = CatalogWork & {
     best_quality: CatalogRelease | null;
   };
   releases: CatalogRelease[];
+  /** Episodes already in the library, so the sheet marks a ✓ instead of
+   *  offering a re-download. */
+  owned_episodes: { episode: number; episode_end: number | null; file_id: number }[];
   /** Nothing here clears the viability bar. Said before the download, not after. */
   all_dead: boolean;
 };

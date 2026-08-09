@@ -302,3 +302,50 @@ class TestPollingDownloads:
         client.post(f"/api/catalog/works/{wid}/download", json={})
         b = client.get("/api/catalog/downloads").json()["downloads"]
         assert b[0]["state"] == "failed" and "no such gid" in b[0]["error"]
+
+
+class TestTheSheetKnowsWhatIsOnDisk:
+    def test_an_owned_episode_is_named_in_the_work_payload(self, client, db_session):
+        """file-page §5, the half that was actually missing.
+
+        The sheet grew its own episode list from indexer releases, so it offers
+        to download an episode that is already in the library. The library
+        already knows better — series.episodes_for merges owned and available —
+        and the payload now carries the owned rows so a ✓ can replace a
+        re-download.
+        """
+        from miru.catalog.models import CatalogRelease, CatalogWork
+        from miru.library.models import MediaFile
+
+        f = MediaFile(id=77, path="/m/Show.S01E05.mkv", title="Show 5",
+                      size_bytes=1, mtime=0.0)
+        db_session.add(f)
+        w = CatalogWork(kind="anime", normalised_title="show", display_title="Show",
+                        library_file_id=77)
+        db_session.add(w)
+        db_session.flush()
+        db_session.add(CatalogRelease(
+            info_hash="c" * 40, indexer="Nyaa.si", guid="g", title="Show - 05",
+            kind="anime", work_id=w.id, parsed_title="Show", episode=5,
+            seeder_pct=0.5, seeders=5, leechers=0, size_bytes=1, magnet="magnet:?x",
+        ))
+        db_session.commit()
+
+        body = client.get(f"/api/catalog/works/{w.id}").json()
+        assert body["owned_episodes"] == [
+            {"episode": 5, "episode_end": None, "file_id": 77}
+        ]
+
+    def test_a_work_with_nothing_on_disk_owns_nothing(self, client, db_session):
+        from miru.catalog.models import CatalogRelease, CatalogWork
+
+        w = CatalogWork(kind="anime", normalised_title="new", display_title="New")
+        db_session.add(w)
+        db_session.flush()
+        db_session.add(CatalogRelease(
+            info_hash="d" * 40, indexer="Nyaa.si", guid="g", title="New - 01",
+            kind="anime", work_id=w.id, parsed_title="New", episode=1,
+            seeder_pct=0.5, seeders=5, leechers=0, size_bytes=1, magnet="magnet:?x",
+        ))
+        db_session.commit()
+        assert client.get(f"/api/catalog/works/{w.id}").json()["owned_episodes"] == []

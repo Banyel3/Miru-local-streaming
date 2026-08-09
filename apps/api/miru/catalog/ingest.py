@@ -315,6 +315,10 @@ def ingest_search(db: Session, results: list[SearchResult]) -> dict:
     return {"seen": len(seen), "added": added}
 
 
+# Torznab's standard blocks, same numbers classify.py reads back.
+ANIME_CAT, TV_CAT, MOVIE_CAT = 5070, 5000, 2000
+
+
 def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     """Run one pass and record it.
 
@@ -328,13 +332,33 @@ def refresh(db: Session, provider, kinds: tuple[str, ...] = ()) -> dict:
     # The empty query is the indexers' front pages; the configured ones are
     # whatever this person actually watches. Without the second, anything
     # regional is invisible on the wall however much of it exists.
-    queries = [""] + [q.strip() for q in (settings.catalog_queries or "").split(",") if q.strip()]
+    # The browse pass runs once mixed and once per category block: indexers
+    # return a front page PER CATEGORY, so the per-block asks widen the one-day
+    # window for three extra requests. Text queries are not multiplied — they
+    # already reach past the front page, which is the only thing categories
+    # widen. (player-and-coverage §6; the measurement is that plan's §2.)
+    passes: list[tuple[str, list[int] | None]] = [("", None)]
+    passes += [("", [c]) for c in (ANIME_CAT, TV_CAT, MOVIE_CAT)]
+    passes += [
+        (q.strip(), None)
+        for q in (settings.catalog_queries or "").split(",")
+        if q.strip()
+    ]
 
     results: list[SearchResult] = []
     failures: list[str] = []
-    for q in queries:
+    for q, cats in passes:
         try:
-            results.extend(provider.search(q))
+            if cats:
+                try:
+                    results.extend(provider.search(q, categories=cats))
+                except TypeError:
+                    # A provider without the parameter — the worker's fakes,
+                    # an older backend. The mixed pass already ran; losing the
+                    # per-category widening beats an empty wall.
+                    continue
+            else:
+                results.extend(provider.search(q))
         except Exception as exc:  # noqa: BLE001 — recorded, not swallowed
             failures.append(f"{q or 'browse'}: {exc}")
             log.warning("catalog query %r failed: %s", q or "browse", exc)

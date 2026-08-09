@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { groupReleases, threeChoices } from "./episodes";
+import { groupReleases, ownedFileFor, threeChoices } from "./episodes";
 import type { CatalogRelease } from "./api";
 
 /**
@@ -114,4 +114,35 @@ test("an episode with nothing grabbable yields no choices at all", () => {
   const choices = threeChoices([rel({ seeders: 0 }), rel({ grabbable: false })]);
   assert.equal(choices.best, null);
   assert.equal(choices.smallest, null);
+});
+
+// ── ownership ────────────────────────────────────────────────────────────────
+// The sheet's rows are built from indexer releases and used to offer a
+// re-download of an episode already sitting in the library. The API now names
+// what is owned; this maps a row to its file.
+
+test("an owned single episode maps to its library file", () => {
+  const g = { key: "single:5", kind: "single" as const, from: 5, releases: [rel({ episode: 5 })] };
+  assert.equal(ownedFileFor(g, [{ episode: 5, episode_end: null, file_id: 77 }]), 77);
+});
+
+test("an unowned episode maps to nothing", () => {
+  const g = { key: "single:6", kind: "single" as const, from: 6, releases: [rel({ episode: 6 })] };
+  assert.equal(ownedFileFor(g, [{ episode: 5, episode_end: null, file_id: 77 }]), null);
+});
+
+test("a batch only matches the batch that was actually downloaded", () => {
+  // Owning episode 5 is not owning the 1-12 batch — marking the batch owned
+  // would hide the very download that completes the series.
+  const g = {
+    key: "batch:1-12", kind: "batch" as const, from: 1,
+    releases: [rel({ episode: 1, episode_end: 12 })],
+  };
+  assert.equal(ownedFileFor(g, [{ episode: 5, episode_end: null, file_id: 77 }]), null);
+  assert.equal(ownedFileFor(g, [{ episode: 1, episode_end: 12, file_id: 88 }]), 88);
+});
+
+test("unsorted rows are never marked owned", () => {
+  const g = { key: "unsorted", kind: "unsorted" as const, from: -1, releases: [rel({})] };
+  assert.equal(ownedFileFor(g, [{ episode: 5, episode_end: null, file_id: 77 }]), null);
 });

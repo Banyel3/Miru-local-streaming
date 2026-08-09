@@ -10,7 +10,7 @@ import {
   playbackNote,
   releaseSpec,
 } from "@/lib/api";
-import { Group, SECTION, grabbable, groupReleases, threeChoices } from "@/lib/episodes";
+import { Group, SECTION, grabbable, groupReleases, ownedFileFor, threeChoices } from "@/lib/episodes";
 import { Button, EmptyState, MicroChip } from "@/components/ui";
 import { ChevronLeft, Close } from "@/components/icons";
 import { useRouter } from "next/navigation";
@@ -84,17 +84,30 @@ const groupLabel = (g: Group) => episodeLabel(g.releases[0]) ?? "No episode numb
 
 /** One episode, or one batch. The chips preview the release you would get by
  *  clicking, so the row and the picker behind it cannot disagree. */
-function EpisodeRow({ group, onOpen }: { group: Group; onOpen: () => void }) {
+function EpisodeRow({
+  group,
+  onOpen,
+  ownedFileId = null,
+}: {
+  group: Group;
+  onOpen: () => void;
+  ownedFileId?: number | null;
+}) {
   const pick = threeChoices(group.releases).best ?? group.releases[0];
+  const router = useRouter();
   return (
     <li>
       <button
         type="button"
-        onClick={onOpen}
+        // An owned row plays from the library instead of re-offering the
+        // download the user already has — the sheet finally knows what is on
+        // disk (file-page §5).
+        onClick={ownedFileId != null ? () => router.push(`/watch/${ownedFileId}`) : onOpen}
         className="flex min-h-11 w-full items-center gap-3 rounded-2xl border border-border bg-bg px-3.5 py-2 text-left transition-colors hover:border-border-hover"
       >
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold">{groupLabel(group)}</span>
         <span className="flex shrink-0 items-center gap-1.5">
+          {ownedFileId != null && <MicroChip tone="bright">✓ in library</MicroChip>}
           {pick.quality && <MicroChip>{pick.quality}</MicroChip>}
           <MicroChip>{fileSize(pick.size_bytes)}</MicroChip>
           <MicroChip tone={group.releases.length > 1 ? "bright" : "muted"}>
@@ -328,7 +341,12 @@ export function ReleaseSheet({
                 </h3>
                 <ul className="flex flex-col gap-2">
                   {rows.map((g) => (
-                    <EpisodeRow key={g.key} group={g} onOpen={() => open(g)} />
+                    <EpisodeRow
+                      key={g.key}
+                      group={g}
+                      onOpen={() => open(g)}
+                      ownedFileId={ownedFileFor(g, detail?.owned_episodes ?? [])}
+                    />
                   ))}
                 </ul>
               </section>

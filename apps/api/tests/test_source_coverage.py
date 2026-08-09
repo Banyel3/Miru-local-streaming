@@ -187,3 +187,61 @@ class TestOneSourcePerSeries:
         # Preferring a source is a recommendation, never a filter: the user has
         # to be able to leave a group that started subbing badly.
         assert {r["group"] for r in body["releases"]} == {"SubsPlease", "Erai-raws"}
+
+
+class TestTheFrontPageIsAskedPerCategory:
+    """One empty query returns ~366 rows across four indexers — and that is the
+    whole window, because indexers return a front page PER CATEGORY and we only
+    ever asked for the mixed one. Asking per category multiplies coverage for
+    three extra requests per pass. Measured need: the ten-hour front-page
+    window in docs/plans/2026-08-08-player-and-coverage.md §2.
+    """
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def search(self, query, limit=50, categories=None):
+            self.calls.append((query, tuple(categories or ())))
+            return []
+
+    def test_the_browse_pass_covers_each_category_block(self, db_session):
+        from miru.catalog.ingest import refresh
+
+        p = self.Recorder()
+        refresh(db_session, p)
+        browse = [cats for q, cats in p.calls if q == ""]
+        # The mixed front page, then one per block: anime, TV, movies.
+        assert (5070,) in browse
+        assert (5000,) in browse
+        assert (2000,) in browse
+
+    def test_configured_queries_are_not_multiplied_by_category(self, db_session):
+        # "filipino" is one question, not three: a text query already reaches
+        # past the front page, which is the only thing categories widen.
+        from miru.catalog.ingest import refresh
+        from miru.core.config import settings
+
+        p = self.Recorder()
+        old = settings.catalog_queries
+        settings.catalog_queries = "filipino"
+        try:
+            refresh(db_session, p)
+        finally:
+            settings.catalog_queries = old
+        assert [c for q, c in p.calls if q == "filipino"] == [()]
+
+    def test_a_provider_without_the_parameter_still_works(self, db_session):
+        # The worker's fake providers and any older backend take (query, limit)
+        # only. A refresh must not TypeError its way into an empty wall.
+        from miru.catalog.ingest import refresh
+
+        calls = []
+
+        class Legacy:
+            def search(self, query, limit=50):
+                calls.append(query)
+                return []
+
+        refresh(db_session, Legacy())
+        assert "" in calls

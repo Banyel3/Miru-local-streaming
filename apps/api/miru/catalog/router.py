@@ -29,6 +29,7 @@ from miru.catalog.models import CatalogRefresh, CatalogRelease, CatalogWork
 from miru.catalog.rank import Candidate, all_viable_dead, three_choices
 from miru.core.config import settings
 from miru.core.db import get_db
+from miru.library.series import episodes_for
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
@@ -288,6 +289,14 @@ def work_detail(work_id: int, db: Session = Depends(get_db)):
             for name, c in choices.items()
         },
         "releases": [_release_json(r) for r in releases],
+        # What is already on disk, so the sheet marks a ✓ instead of offering a
+        # re-download — file-page §5's actual remaining gap. The library is the
+        # thing that knows; series.episodes_for merges owned and available.
+        "owned_episodes": [
+            {"episode": e["episode"], "episode_end": e["episode_end"], "file_id": e["file_id"]}
+            for e in episodes_for(db, work)
+            if e["owned"]
+        ],
         # Said up front rather than discovered after a download that never starts.
         "all_dead": all_viable_dead(_candidates(releases)),
     }

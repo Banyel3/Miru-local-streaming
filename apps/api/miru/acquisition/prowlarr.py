@@ -73,11 +73,21 @@ class ProwlarrAria2Provider:
     def configured(self) -> bool:
         return bool(settings.prowlarr_url and settings.prowlarr_api_key)
 
-    def search(self, query: str, limit: int = 50) -> list[SearchResult]:
+    def search(
+        self, query: str, limit: int = 50, categories: list[int] | None = None
+    ) -> list[SearchResult]:
         if not self.configured():
             raise AcquisitionError("Prowlarr is not configured")
 
-        qs = urllib.parse.urlencode({"query": query, "limit": limit, "type": "search"})
+        params: list[tuple[str, object]] = [
+            ("query", query), ("limit", limit), ("type", "search"),
+        ]
+        # Torznab categories. The point is the BROWSE pass: indexers return a
+        # front page per category, so asking each block separately widens the
+        # one-day window the empty query sees — for three extra requests.
+        for c in categories or ():
+            params.append(("categories", c))
+        qs = urllib.parse.urlencode(params)
         raw = _get_json(
             f"{settings.prowlarr_url.rstrip('/')}/api/v1/search?{qs}",
             {"X-Api-Key": settings.prowlarr_api_key},
