@@ -294,6 +294,20 @@ class TestStreamingLeavesAHeartbeat:
         db_session.expire_all()
         assert db_session.get(CatalogWork, w.id).last_streamed_at is not None
 
+    def test_first_touch_survives_a_fresh_boot(self, db_session, monkeypatch):
+        # monotonic counts from boot. With 0.0 as the "never touched"
+        # sentinel, a machine up less than a minute throttles the FIRST
+        # touch — every CI run failed this way, and a rebooted laptop
+        # would mark every early stream abandoned.
+        from miru.streaming import partial as mod
+
+        monkeypatch.setattr(mod, "_touched", {})
+        monkeypatch.setattr(mod.time, "monotonic", lambda: 30.0)
+        w = _work(db_session, job="feed" + "0" * 36, ephemeral=True)
+        mod._touch_last_streamed("feed" + "0" * 36)
+        db_session.expire_all()
+        assert db_session.get(CatalogWork, w.id).last_streamed_at is not None
+
     def test_the_touch_is_throttled(self, db_session, monkeypatch):
         from miru.streaming import partial as mod
 

@@ -72,7 +72,10 @@ _touched: dict[str, float] = {}
 
 def _touch_last_streamed(info_hash: str) -> None:
     now = time.monotonic()
-    if now - _touched.get(info_hash, 0.0) < 60:
+    # None, not 0.0: monotonic counts from boot, so on a machine up less
+    # than a minute the sentinel throttled the first touch too.
+    last = _touched.get(info_hash)
+    if last is not None and now - last < 60:
         return
     _touched[info_hash] = now
     try:
