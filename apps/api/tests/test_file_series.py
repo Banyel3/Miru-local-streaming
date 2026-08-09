@@ -39,6 +39,24 @@ def series(db_session):
     return {"work": work, "owned": owned, "other": other}
 
 
+class TestTheLibraryListKnowsItsSeries:
+    def test_a_linked_row_carries_its_series_and_poster(self, client, series):
+        # The library page draws poster-led rows. Only the detail route knew
+        # the series, so the list had no art source and fell back to filenames
+        # for every row.
+        rows = client.get("/api/library").json()
+        by_id = {r["id"]: r for r in rows}
+        linked = by_id[series["owned"].id]
+        assert linked["series"] is not None
+        assert linked["series"]["poster_url"]
+        assert linked["series"]["title"] == "The Dangers in My Heart"
+
+    def test_an_unlinked_row_says_none_rather_than_guessing(self, client, series):
+        rows = client.get("/api/library").json()
+        by_id = {r["id"]: r for r in rows}
+        assert by_id[series["other"].id]["series"] is None
+
+
 class TestTheFileKnowsItsSeries:
     def test_the_poster_survives_the_click(self, client, series):
         # Reported as "the images display fine but when clicking something it

@@ -150,6 +150,7 @@ export function Player({
   progressKey = null,
   tracks = [],
   strategy,
+  durationS = null,
   next = null,
   restart = false,
   embedded = false,
@@ -168,6 +169,11 @@ export function Player({
   progressKey?: number | null;
   tracks?: SubtitleTrack[];
   strategy?: MediaFile["playback_strategy"];
+  /** The file's real length, when the library knows it. Load-bearing for
+   *  transcodes: while the PC is still encoding, the HLS playlist is an EVENT
+   *  stream with no end marker, and without an explicit duration Vidstack
+   *  classifies it as a live broadcast — LIVE badge, no seek bar. */
+  durationS?: number | null;
   next?: NextUp | null;
   restart?: boolean;
   /** Sits in a page at aspect-video instead of owning the viewport. */
@@ -291,6 +297,12 @@ export function Player({
           // Explicit type, always. See mimeType() — an extensionless stream URL
           // sends Vidstack down a cross-origin header probe that fails silently.
           src={{ src, type: mime }}
+          // Nothing Miru plays is a broadcast — every source is a file, even
+          // the ones still growing. Without this, a mid-transcode HLS playlist
+          // (EVENT, no ENDLIST yet) renders the live layout: LIVE chip, no
+          // seek bar, no duration.
+          streamType="on-demand"
+          duration={durationS ?? undefined}
           // Required, not optional. The stream is cross-origin, and without this
           // the video is a tainted source: JASSUB cannot construct a VideoFrame
           // from it and dies before it ever fetches the subtitle file. The API

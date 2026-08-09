@@ -72,13 +72,24 @@ class JobOut(BaseModel):
     error: str | None
 
 
-@router.get("/library", response_model=list[MediaFileOut])
+@router.get("/library")
 def library(q: str | None = None, sort: str = "title", db: Session = Depends(get_db)):
     stmt = select(MediaFile)
     if q:
         stmt = stmt.where(or_(MediaFile.title.ilike(f"%{q}%"), MediaFile.path.ilike(f"%{q}%")))
     order = {"title": MediaFile.title, "added": MediaFile.created_at.desc()}.get(sort, MediaFile.title)
-    return db.scalars(stmt.order_by(order)).all()
+    files = db.scalars(stmt.order_by(order)).all()
+
+    # The list draws poster-led rows, so it needs each file's show — one query
+    # for the whole page, not a work_for_file per row.
+    works = series_mod.works_for_files(db, [f.id for f in files])
+    payloads = []
+    for f in files:
+        p = MediaFileOut.model_validate(f, from_attributes=True).model_dump()
+        w = works.get(f.id)
+        p["series"] = series_mod.series_payload(w) if w else None
+        payloads.append(p)
+    return payloads
 
 
 @router.get("/files/{file_id}")

@@ -98,6 +98,7 @@ export default async function WatchPage({
     progressKey: file.id,
     tracks: subtitleTracks(file),
     strategy: file.playback_strategy,
+    durationS: file.duration_ms ? file.duration_ms / 1000 : null,
     next: next && { href: `/watch/${next.id}`, label: displayTitle(next).label, seed: next.title },
     restart: restart === "1",
   };

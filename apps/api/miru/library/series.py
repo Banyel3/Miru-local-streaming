@@ -26,6 +26,17 @@ def work_for_file(db: Session, file_id: int) -> CatalogWork | None:
     ).scalar_one_or_none()
 
 
+def works_for_files(db: Session, file_ids: list[int]) -> dict[int, CatalogWork]:
+    if not file_ids:
+        return {}
+    return {
+        w.library_file_id: w
+        for w in db.execute(
+            select(CatalogWork).where(CatalogWork.library_file_id.in_(file_ids))
+        ).scalars()
+    }
+
+
 def series_payload(work: CatalogWork) -> dict:
     return {
         "work_id": work.id,
