@@ -59,11 +59,18 @@ export type Job = {
  *  a LAN address the browser could not reach. */
 const API_INTERNAL = process.env.MIRU_API_URL ?? "http://localhost:8000";
 
-/** Browser-reachable. Only used to build <video src>, which the browser fetches
- *  itself. These are two different values in the two-box deployment and cannot
- *  share one variable. */
-export const API_PUBLIC =
-  process.env.NEXT_PUBLIC_MIRU_STREAM_URL ?? "http://localhost:8000";
+/** Browser-reachable base for everything the BROWSER fetches itself — the
+ *  <video src>, the remux status poll, the live stream probe.
+ *
+ *  Relative by default, on purpose. NEXT_PUBLIC_* is baked into the client
+ *  bundle at BUILD time, and a build run without the root .env exported baked
+ *  the old fallback `http://localhost:8000` — so every browser on every other
+ *  machine polled ITS OWN localhost: the watch page sat on "Preparing for your
+ *  browser" forever while the API was ready, and video elements pointed at
+ *  nothing. nginx serves the API same-origin at /api, so "" is correct from
+ *  any hostname the site is reached on, whatever env the build ran in. The
+ *  env override remains for setups without the reverse proxy. */
+export const API_PUBLIC = process.env.NEXT_PUBLIC_MIRU_STREAM_URL ?? "";
 
 export class ApiError extends Error {
   constructor(
